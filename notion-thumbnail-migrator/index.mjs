@@ -194,9 +194,18 @@ async function queryWithPath(path, startCursor) {
   return res.json();
 }
 
+async function resolveDataSourceId(databaseId) {
+  const res = await notionFetch(`/v1/databases/${databaseId}`);
+  const db = await res.json();
+  const ds = db?.data_sources?.[0]?.id;
+  if (!ds) throw new Error(`No data_sources found for database ${databaseId}`);
+  return ds;
+}
+
 async function* queryAllPages(databaseId) {
   let cursor;
   let mode = "sdk-database";
+  let dataSourceId;
 
   while (true) {
     let resp;
@@ -208,14 +217,15 @@ async function* queryAllPages(databaseId) {
           start_cursor: cursor,
           page_size: 100,
         });
-      } catch (e) {
+      } catch {
         mode = "api-data-source";
       }
     }
 
     if (mode === "api-data-source") {
       try {
-        resp = await queryWithPath(`/v1/data_sources/${databaseId}/query`, cursor);
+        dataSourceId ||= await resolveDataSourceId(databaseId);
+        resp = await queryWithPath(`/v1/data_sources/${dataSourceId}/query`, cursor);
       } catch {
         mode = "api-database";
       }
