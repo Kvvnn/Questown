@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -184,6 +186,25 @@ def group_completed_tasks_by_time_bucket(tasks: List[Dict[str, Any]]) -> Dict[st
     return ordered_non_empty
 
 
+def _load_env_from_zshrc(var_name: str) -> Optional[str]:
+    zshrc = Path("~/.zshrc").expanduser()
+    if not zshrc.exists():
+        return None
+
+    pattern = re.compile(rf"^\s*export\s+{re.escape(var_name)}=(.*)\s*$")
+    for line in zshrc.read_text(encoding="utf-8").splitlines():
+        m = pattern.match(line)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        return value
+    return None
+
+
 def build_today_completed_report(
     token: Optional[str] = None,
     local_tz: str = "Asia/Seoul",
@@ -203,9 +224,9 @@ def build_today_completed_report(
       }
     }
     """
-    token = token or os.getenv("TODOIST_TOKEN")
+    token = token or os.getenv("TODOIST_TOKEN") or _load_env_from_zshrc("TODOIST_TOKEN")
     if not token:
-        raise ValueError("TODOIST_TOKEN is missing. Pass token explicitly or set env var.")
+        raise ValueError("TODOIST_TOKEN is missing. Set env var or add export TODOIST_TOKEN=... to ~/.zshrc")
 
     tasks = fetch_completed_tasks_today(token=token, local_tz=local_tz, include_project_and_labels=True)
     grouped = group_completed_tasks_by_time_bucket(tasks)
