@@ -28,6 +28,25 @@ class SyncResult:
     errors: int
 
 
+def _load_env_from_zshrc(var_name: str) -> Optional[str]:
+    zshrc = Path("~/.zshrc").expanduser()
+    if not zshrc.exists():
+        return None
+
+    pattern = re.compile(rf"^\s*export\s+{re.escape(var_name)}=(.*)\s*$")
+    for line in zshrc.read_text(encoding="utf-8").splitlines():
+        m = pattern.match(line)
+        if not m:
+            continue
+        value = m.group(1).strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1]
+        return value
+    return None
+
+
 def extract_notion_id(url_or_id: str) -> str:
     raw = (url_or_id or "").strip()
     if re.fullmatch(r"[0-9a-fA-F]{32}", raw):
@@ -253,14 +272,17 @@ def create_notion_page(notion_key: str, database_id: str, properties: Dict[str, 
 
 def sync_todoist_done_to_notion(local_tz: str = "Asia/Seoul", notion_db: Optional[str] = None) -> SyncResult:
     logger = setup_logger()
-    notion_key = os.getenv("NOTION_API_KEY")
+    notion_key = (
+        os.getenv("NOTION_API_KEY")
+        or _load_env_from_zshrc("NOTION_API_KEY")
+    )
     if not notion_key and Path("~/.config/notion/api_key").expanduser().exists():
         notion_key = Path("~/.config/notion/api_key").expanduser().read_text(encoding="utf-8").strip()
 
     if not notion_key:
-        raise RuntimeError("NOTION_API_KEY is missing.")
+        raise RuntimeError("NOTION_API_KEY is missing. Set env var, ~/.zshrc export, or ~/.config/notion/api_key")
 
-    db_source = notion_db or os.getenv("NOTION_DATABASE_ID") or DEFAULT_DB_URL
+    db_source = notion_db or os.getenv("NOTION_DATABASE_ID") or _load_env_from_zshrc("NOTION_DATABASE_ID") or DEFAULT_DB_URL
     database_id = extract_notion_id(db_source)
 
     report = build_today_completed_report(local_tz=local_tz)
