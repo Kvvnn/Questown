@@ -34,7 +34,7 @@ def _load_env_from_zshrc(var_name: str) -> Optional[str]:
     if not zshrc.exists():
         return None
 
-    pattern = re.compile(rf"^\s*export\s+{re.escape(var_name)}=(.*)\s*$")
+    pattern = re.compile(rf"^\s*export\s+{re.escape(var_name)}\s*=\s*(.*)\s*$")
     for line in zshrc.read_text(encoding="utf-8").splitlines():
         m = pattern.match(line)
         if not m:
@@ -315,7 +315,14 @@ def sync_todoist_done_to_notion(local_tz: str = "Asia/Seoul", notion_db: Optiona
     if not notion_key:
         raise RuntimeError("NOTION_API_KEY is missing. Set env var, ~/.zshrc export, or ~/.config/notion/api_key")
 
-    db_source = notion_db or os.getenv("NOTION_DATABASE_ID") or _load_env_from_zshrc("NOTION_DATABASE_ID") or DEFAULT_DB_URL
+    db_source = (
+        notion_db
+        or os.getenv("NOTION_DATABASE_ID")
+        or os.getenv("NOTION_DB_DAILY_DONE_LOG")
+        or _load_env_from_zshrc("NOTION_DATABASE_ID")
+        or _load_env_from_zshrc("NOTION_DB_DAILY_DONE_LOG")
+        or DEFAULT_DB_URL
+    )
     database_id = resolve_database_id(notion_key, db_source)
 
     report = build_today_completed_report(local_tz=local_tz)
