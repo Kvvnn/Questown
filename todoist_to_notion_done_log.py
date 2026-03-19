@@ -15,6 +15,7 @@ from todoist_completed_today import build_today_completed_report
 
 
 NOTION_VERSION = "2022-06-28"
+NOTION_VERSION_DS = "2025-09-03"
 NOTION_API_BASE = "https://api.notion.com/v1"
 DEFAULT_DB_URL = "https://www.notion.so/kkvvnn/Daily-Done-Log-30ec513e441680b0b9f6cbc65225ff06?source=copy_link"
 
@@ -72,10 +73,10 @@ def setup_logger(log_file: str = "logs/todoist_notion_sync.log") -> logging.Logg
     return logger
 
 
-def notion_headers(notion_key: str) -> Dict[str, str]:
+def notion_headers(notion_key: str, version: str = NOTION_VERSION) -> Dict[str, str]:
     return {
         "Authorization": f"Bearer {notion_key}",
-        "Notion-Version": NOTION_VERSION,
+        "Notion-Version": version,
         "Content-Type": "application/json",
     }
 
@@ -88,6 +89,38 @@ def notion_get_database(notion_key: str, database_id: str) -> Dict[str, Any]:
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def resolve_database_id(notion_key: str, supplied_id: str) -> str:
+    """
+    Accept either Notion database_id or data_source_id and resolve to database_id.
+    """
+    normalized = extract_notion_id(supplied_id)
+
+    # 1) Try as database_id (legacy endpoint)
+    resp = requests.get(
+        f"{NOTION_API_BASE}/databases/{normalized}",
+        headers=notion_headers(notion_key, version=NOTION_VERSION),
+        timeout=30,
+    )
+    if resp.status_code == 200:
+        return normalized
+
+    # 2) Try as data_source_id (new endpoint)
+    ds_resp = requests.get(
+        f"{NOTION_API_BASE}/data_sources/{normalized}",
+        headers=notion_headers(notion_key, version=NOTION_VERSION_DS),
+        timeout=30,
+    )
+    ds_resp.raise_for_status()
+    ds = ds_resp.json()
+
+    parent = ds.get("parent", {})
+    database_id = parent.get("database_id") or ds.get("database_id")
+    if not database_id:
+        raise RuntimeError("Could not resolve database_id from provided Notion data_source_id")
+
+    return extract_notion_id(database_id)
 
 
 def choose_title_property(properties: Dict[str, Any]) -> Optional[str]:
@@ -283,7 +316,7 @@ def sync_todoist_done_to_notion(local_tz: str = "Asia/Seoul", notion_db: Optiona
         raise RuntimeError("NOTION_API_KEY is missing. Set env var, ~/.zshrc export, or ~/.config/notion/api_key")
 
     db_source = notion_db or os.getenv("NOTION_DATABASE_ID") or _load_env_from_zshrc("NOTION_DATABASE_ID") or DEFAULT_DB_URL
-    database_id = extract_notion_id(db_source)
+    database_id = resolve_database_id(notion_key, db_source)
 
     report = build_today_completed_report(local_tz=local_tz)
     tasks = report["tasks"]
