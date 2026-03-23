@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo } from "react";
+import type { KeyboardEvent } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Button, Card } from "@/components/ui";
 import { getBuildingHeight } from "@/domain/building";
 import { getDaysInMonth } from "@/domain/date";
 import { createTownLayout, TownLayout, TownPlot } from "@/domain/town-map";
+import { moveDateInMonth, TownDirection } from "@/domain/town-navigation";
 import { DailyRecord } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
 
@@ -48,19 +50,16 @@ const getCameraTarget = (plot: TownPlot | undefined, layout: TownLayout, reduced
   };
 };
 
-function TownLot({
-  plot,
-  layout,
-  record,
-  selected,
-  onSelect
-}: {
+interface TownLotProps {
   plot: TownPlot;
   layout: TownLayout;
   record?: DailyRecord;
   selected: boolean;
+  reducedMotion: boolean;
   onSelect: (date: string) => void;
-}) {
+}
+
+const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedMotion, onSelect }: TownLotProps) {
   const height = getBuildingHeight(record?.completedCount ?? 0);
   const floors = Math.min(height, 7);
   const roofType = record?.isFinalized ? record.roofType : "none";
@@ -78,6 +77,7 @@ function TownLot({
     <button
       onClick={() => onSelect(plot.date)}
       aria-label={`${plot.date} 빌딩 선택`}
+      aria-pressed={selected}
       className="absolute text-left"
       style={{
         left: layout.padding + plot.col * layout.slot,
@@ -87,7 +87,7 @@ function TownLot({
       }}
     >
       <motion.div
-        animate={{ y: selected ? -6 : 0, scale: selected ? 1.06 : 1 }}
+        animate={reducedMotion ? { y: 0, scale: 1 } : { y: selected ? -6 : 0, scale: selected ? 1.06 : 1 }}
         transition={{ type: "spring", stiffness: 260, damping: 20 }}
         className={`relative flex h-11 w-11 flex-col items-center justify-end rounded-2xl border border-white/70 bg-gradient-to-b from-sky-100 to-emerald-100 p-1 shadow ${selected ? "ring-2 ring-quest-primary" : ""}`}
       >
@@ -118,7 +118,7 @@ function TownLot({
       </div>
     </button>
   );
-}
+});
 
 export function MonthlyTownView() {
   const selectedMonth = useQuestownStore((s) => s.selectedMonth);
@@ -152,31 +152,56 @@ export function MonthlyTownView() {
   const camera = useMemo(() => getCameraTarget(selectedPlot, layout, reducedMotion), [layout, reducedMotion, selectedPlot]);
 
   const districtSummary = useMemo(() => {
-    return layout.districts.map((district) => {
-      const districtPlots = layout.plots.filter((plot) => plot.district === district.name);
-      const completed = districtPlots.reduce(
-        (sum, plot) => sum + (recordsByDate[plot.date]?.completedCount ?? 0),
-        0
-      );
-      const total = districtPlots.reduce((sum, plot) => sum + (recordsByDate[plot.date]?.totalCount ?? 0), 0);
+    const byDistrict = new Map<string, { completed: number; total: number }>();
 
+    layout.plots.forEach((plot) => {
+      const base = byDistrict.get(plot.district) ?? { completed: 0, total: 0 };
+      const record = recordsByDate[plot.date];
+      base.completed += record?.completedCount ?? 0;
+      base.total += record?.totalCount ?? 0;
+      byDistrict.set(plot.district, base);
+    });
+
+    return layout.districts.map((district) => {
+      const value = byDistrict.get(district.name) ?? { completed: 0, total: 0 };
       return {
         name: district.name,
-        completed,
-        rate: total > 0 ? Math.round((completed / total) * 100) : 0
+        completed: value.completed,
+        rate: value.total > 0 ? Math.round((value.completed / value.total) * 100) : 0
       };
     });
   }, [layout.districts, layout.plots, recordsByDate]);
 
+  const handleMapKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      const directionByKey: Record<string, TownDirection> = {
+        ArrowLeft: "left",
+        ArrowRight: "right",
+        ArrowUp: "up",
+        ArrowDown: "down",
+        Home: "home",
+        End: "end"
+      };
+
+      const direction = directionByKey[event.key];
+      if (!direction) return;
+
+      event.preventDefault();
+      const nextDate = moveDateInMonth(selectedDateInTown, selectedMonth, dayCount, direction);
+      selectDateInTown(nextDate);
+    },
+    [dayCount, selectDateInTown, selectedDateInTown, selectedMonth]
+  );
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" id="town-panel-content">
       <Card>
         <div className="mb-3 flex items-center justify-between">
-          <Button className="min-h-11 bg-slate-100" onClick={() => moveMonth(-1)}>
+          <Button className="min-h-11 bg-slate-100" onClick={() => moveMonth(-1)} aria-label="이전 달 보기">
             이전 달
           </Button>
           <h2 className="text-lg font-black tracking-tight">🗺️ {selectedMonth} Questown Scene</h2>
-          <Button className="min-h-11 bg-slate-100" onClick={() => moveMonth(1)}>
+          <Button className="min-h-11 bg-slate-100" onClick={() => moveMonth(1)} aria-label="다음 달 보기">
             다음 달
           </Button>
         </div>
@@ -192,7 +217,18 @@ export function MonthlyTownView() {
           ))}
         </div>
 
-        <div className="relative h-[390px] overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-b from-sky-100 via-cyan-50 to-emerald-100">
+        <p id="town-map-help" className="mb-2 text-xs text-slate-500">
+          키보드로도 이동할 수 있어요: ← → ↑ ↓, Home, End
+        </p>
+
+        <div
+          role="region"
+          aria-label="월간 타운 맵"
+          aria-describedby="town-map-help"
+          tabIndex={0}
+          onKeyDown={handleMapKeyDown}
+          className="relative h-[390px] overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-b from-sky-100 via-cyan-50 to-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-quest-primary"
+        >
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(255,255,255,0.65),transparent_45%),radial-gradient(circle_at_85%_18%,rgba(196,181,253,0.35),transparent_45%)]" />
 
           <motion.div
@@ -268,6 +304,7 @@ export function MonthlyTownView() {
                 layout={layout}
                 record={recordsByDate[plot.date]}
                 selected={selectedDateInTown === plot.date}
+                reducedMotion={reducedMotion}
                 onSelect={selectDateInTown}
               />
             ))}
@@ -285,7 +322,9 @@ export function MonthlyTownView() {
         <h3 className="mb-2 text-lg font-black">빌딩 상세</h3>
 
         {selectedPlot ? (
-          <span className={`mb-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${districtAccent[selectedPlot.district] ?? districtAccent.Central}`}>
+          <span
+            className={`mb-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${districtAccent[selectedPlot.district] ?? districtAccent.Central}`}
+          >
             {selectedPlot.district} · Day {selectedPlot.day}
           </span>
         ) : null}

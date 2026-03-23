@@ -1,10 +1,17 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect } from "react";
-import { MonthlyTownView } from "@/components/monthly-town-view";
-import { TodayView } from "@/components/today-view";
 import { Button, Card } from "@/components/ui";
 import { useQuestownStore } from "@/store/questown-store";
+
+const TodayView = dynamic(() => import("@/components/today-view").then((mod) => mod.TodayView), {
+  loading: () => <Card className="text-sm text-slate-500">Today 화면 로딩 중...</Card>
+});
+
+const MonthlyTownView = dynamic(() => import("@/components/monthly-town-view").then((mod) => mod.MonthlyTownView), {
+  loading: () => <Card className="text-sm text-slate-500">Town scene 로딩 중...</Card>
+});
 
 export default function HomePage() {
   const currentTab = useQuestownStore((s) => s.currentTab);
@@ -23,7 +30,14 @@ export default function HomePage() {
   }, [hydrateToday, rolloverToToday]);
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-xl space-y-4 px-4 py-6">
+    <main id="main-content" className="mx-auto min-h-screen w-full max-w-xl space-y-4 px-4 py-6">
+      <a
+        href="#tab-panel"
+        className="sr-only absolute left-2 top-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:not-sr-only"
+      >
+        본문으로 바로가기
+      </a>
+
       <Card className="relative overflow-hidden bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 text-white">
         <div className="pointer-events-none absolute -right-8 -top-12 h-32 w-32 rounded-full bg-white/20 blur-xl" />
         <div className="pointer-events-none absolute -left-10 bottom-0 h-24 w-24 rounded-full bg-white/10 blur-lg" />
@@ -32,14 +46,22 @@ export default function HomePage() {
       </Card>
 
       <Card className="p-2">
-        <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
+        <div role="tablist" aria-label="Questown 화면 전환" className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
           <Button
+            role="tab"
+            id="tab-today"
+            aria-controls="panel-today"
+            aria-selected={currentTab === "today"}
             className={`min-h-11 ${currentTab === "today" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
             onClick={() => setTab("today")}
           >
             Today
           </Button>
           <Button
+            role="tab"
+            id="tab-town"
+            aria-controls="panel-town"
+            aria-selected={currentTab === "town"}
             className={`min-h-11 ${currentTab === "town" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
             onClick={() => setTab("town")}
           >
@@ -48,7 +70,22 @@ export default function HomePage() {
         </div>
       </Card>
 
-      {currentTab === "today" ? <TodayView /> : <MonthlyTownView />}
+      <section
+        id="tab-panel"
+        role="tabpanel"
+        aria-labelledby={currentTab === "today" ? "tab-today" : "tab-town"}
+        className="outline-none"
+      >
+        {currentTab === "today" ? (
+          <div id="panel-today" tabIndex={-1}>
+            <TodayView />
+          </div>
+        ) : (
+          <div id="panel-town" tabIndex={-1}>
+            <MonthlyTownView />
+          </div>
+        )}
+      </section>
     </main>
   );
 }

@@ -13,6 +13,8 @@ Duolingo-inspired 게임형 Todo 웹앱입니다.
 - Town 뷰(도시 장면 렌더: district/road/scenery/camera focus)
 - 이벤트 기반 모션(완료/목표달성/연속달성/마감)
 - 리워드 토스트 + 보상 시퀀스
+- 접근성 개선(탭/패널 시맨틱, 라이브 리전, 키보드 Town 이동)
+- Animated number 카운터 + dynamic 탭 로딩 최적화
 - JSON 백업/복원
 
 ## 기술 스택
@@ -41,7 +43,7 @@ npm run build
 
 ## 아키텍처
 - `components/`: UI/화면 컴포넌트
-- `domain/`: 타입 + 계산 유틸(building/date/progress/animation/town-map)
+- `domain/`: 타입 + 계산 유틸(building/date/progress/animation/town-map/town-navigation)
 - `store/`: 상태/저장 로직(Zustand)
 - `app/`: 엔트리 페이지, 탭 라우팅
 
@@ -57,12 +59,14 @@ npm run build
   - `today-view.tsx`
   - `monthly-town-view.tsx`
   - `animated-building.tsx`
+  - `animated-number.tsx`
   - `reward-toasts.tsx`
   - `ui.tsx`
 - `domain/`
   - `types.ts`
   - `animation.ts`
   - `town-map.ts` / `town-map.test.ts`
+  - `town-navigation.ts` / `town-navigation.test.ts`
   - `building.ts` / `building.test.ts`
   - `date.ts` / `date.test.ts`
   - `progress.ts` / `progress.test.ts`

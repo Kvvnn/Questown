@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { AnimatedNumber } from "@/components/animated-number";
 import { CssFramerBuildingRenderer } from "@/components/animated-building";
 import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button, Card } from "@/components/ui";
@@ -21,7 +22,8 @@ export function TodayView() {
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const timeoutRefs = useRef<number[]>([]);
+  const eventTimeoutRefs = useRef<number[]>([]);
+  const toastTimeoutRefs = useRef<number[]>([]);
   const initializedRef = useRef(false);
   const toastIdRef = useRef(1);
 
@@ -64,6 +66,11 @@ export function TodayView() {
     return cheers[record.completedCount % cheers.length];
   }, [record.completedCount, dailyGoal]);
 
+  const clearEventQueue = useCallback(() => {
+    eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
+    eventTimeoutRefs.current = [];
+  }, []);
+
   const pushToast = useCallback((text: string, tone: RewardToastItem["tone"] = "info") => {
     const id = toastIdRef.current;
     toastIdRef.current += 1;
@@ -74,7 +81,7 @@ export function TodayView() {
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 2200);
 
-    timeoutRefs.current.push(timeout);
+    toastTimeoutRefs.current.push(timeout);
   }, []);
 
   const triggerAnimation = useCallback((type: QuestAnimationEventType) => {
@@ -91,9 +98,11 @@ export function TodayView() {
 
   useEffect(() => {
     return () => {
-      timeoutRefs.current.forEach((id) => window.clearTimeout(id));
+      clearEventQueue();
+      toastTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
+      toastTimeoutRefs.current = [];
     };
-  }, []);
+  }, [clearEventQueue]);
 
   useEffect(() => {
     if (!initializedRef.current) {
@@ -141,12 +150,14 @@ export function TodayView() {
       });
     }
 
+    clearEventQueue();
+
     queue.forEach((event, index) => {
       const timeout = window.setTimeout(() => {
         triggerReward(event.type, event.text, event.tone);
-      }, index * 240);
+      }, index * 220);
 
-      timeoutRefs.current.push(timeout);
+      eventTimeoutRefs.current.push(timeout);
     });
 
     previousRef.current = {
@@ -154,7 +165,7 @@ export function TodayView() {
       isFinalized: record.isFinalized,
       streak
     };
-  }, [dailyGoal, percent, record.completedCount, record.isFinalized, streak, triggerReward]);
+  }, [clearEventQueue, dailyGoal, percent, record.completedCount, record.isFinalized, streak, triggerReward]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -201,23 +212,29 @@ export function TodayView() {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" id="today-panel-content">
       <RewardToasts toasts={toasts} />
 
-      <Card className="relative overflow-hidden">
+      <Card className="relative overflow-hidden" aria-labelledby="today-title">
         <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
 
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Daily</p>
-            <h2 className="text-xl font-black">Today · {record.date}</h2>
+            <h2 id="today-title" className="text-xl font-black">
+              Today · {record.date}
+            </h2>
           </div>
           <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-sm font-semibold">{feedback}</span>
         </div>
 
         <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
-          <div className="metric-pill bg-orange-100/80">🔥 Streak {streak}일</div>
-          <div className="metric-pill bg-indigo-100/80">🎯 목표 {dailyGoal}개</div>
+          <div className="metric-pill bg-orange-100/80">
+            🔥 Streak <AnimatedNumber value={streak} />일
+          </div>
+          <div className="metric-pill bg-indigo-100/80">
+            🎯 목표 <AnimatedNumber value={dailyGoal} />개
+          </div>
         </div>
 
         {CssFramerBuildingRenderer.render({
@@ -228,13 +245,19 @@ export function TodayView() {
           reducedMotion: reduceMotion
         })}
 
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm">
-          <div className="metric-pill">완료 {record.completedCount}</div>
-          <div className="metric-pill">전체 {record.totalCount}</div>
-          <div className="metric-pill">완료율 {percent}%</div>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm" aria-live="polite">
+          <div className="metric-pill">
+            완료 <AnimatedNumber value={record.completedCount} />
+          </div>
+          <div className="metric-pill">
+            전체 <AnimatedNumber value={record.totalCount} />
+          </div>
+          <div className="metric-pill">
+            완료율 <AnimatedNumber value={percent} />%
+          </div>
         </div>
 
-        <div className="mt-2 text-center text-xs font-semibold text-slate-600">
+        <div className="mt-2 text-center text-xs font-semibold text-slate-600" aria-live="polite">
           지붕 상태: {record.isFinalized ? record.roofType.toUpperCase() : "마감 전 (NONE)"}
         </div>
 
@@ -258,14 +281,22 @@ export function TodayView() {
       <Card>
         <h3 className="mb-2 text-base font-bold">이번 주 요약</h3>
         <div className="mb-2 grid grid-cols-3 gap-2 text-center text-sm">
-          <div className="metric-pill">완료 {weekly.completed}</div>
-          <div className="metric-pill">전체 {weekly.total}</div>
-          <div className="metric-pill">성공일 {weekly.successfulDays}/7</div>
+          <div className="metric-pill">
+            완료 <AnimatedNumber value={weekly.completed} />
+          </div>
+          <div className="metric-pill">
+            전체 <AnimatedNumber value={weekly.total} />
+          </div>
+          <div className="metric-pill">
+            성공일 <AnimatedNumber value={weekly.successfulDays} />/7
+          </div>
         </div>
         <div className="soft-panel">
           <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
             <span>주간 페이스</span>
-            <span>{weeklyPercent}%</span>
+            <span>
+              <AnimatedNumber value={weeklyPercent} />%
+            </span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-slate-200">
             <motion.div
@@ -278,7 +309,7 @@ export function TodayView() {
       </Card>
 
       <Card>
-        <form onSubmit={onSubmit} className="mb-3 flex gap-2">
+        <form onSubmit={onSubmit} className="mb-3 flex gap-2" aria-describedby="todo-input-hint">
           <input
             aria-label="새 할 일 입력"
             value={input}
@@ -291,6 +322,9 @@ export function TodayView() {
             추가
           </Button>
         </form>
+        <p id="todo-input-hint" className="mb-3 text-xs text-slate-500">
+          같은 문장은 중복 추가되지 않으며, 최대 80자까지 입력할 수 있어요.
+        </p>
 
         <div className="mb-3 soft-panel">
           <label className="mb-1 block text-sm font-semibold">일일 목표치 ({dailyGoal})</label>
@@ -305,7 +339,11 @@ export function TodayView() {
           />
         </div>
 
-        {message ? <p className="mb-3 rounded-xl bg-slate-100 px-3 py-2 text-sm">{message}</p> : null}
+        {message ? (
+          <p role="status" aria-live="polite" className="mb-3 rounded-xl bg-slate-100 px-3 py-2 text-sm">
+            {message}
+          </p>
+        ) : null}
 
         <ul className="space-y-2">
           {record.todos.map((todo) => (
