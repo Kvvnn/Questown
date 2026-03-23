@@ -24,3 +24,4 @@ reports/
 notion-thumbnail-migrator/node_modules/
 notion-thumbnail-migrator/downloads/
 notion-thumbnail-migrator/.env
+.vercel

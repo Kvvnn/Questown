@@ -1,8 +1,11 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { CssFramerBuildingRenderer } from "@/components/animated-building";
+import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button, Card } from "@/components/ui";
+import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
 import { getStreakCount, getWeeklySummary } from "@/domain/progress";
 import { AppBackupData } from "@/domain/types";
 import { useQuestownStore, useTodayBuildingHeight, useTodayRecord } from "@/store/questown-store";
@@ -14,7 +17,13 @@ export function TodayView() {
   const height = useTodayBuildingHeight();
   const [input, setInput] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<RewardToastItem[]>([]);
+  const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
+
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const timeoutRefs = useRef<number[]>([]);
+  const initializedRef = useRef(false);
+  const toastIdRef = useRef(1);
 
   const dailyGoal = useQuestownStore((s) => s.dailyGoal);
   const recordsByDate = useQuestownStore((s) => s.recordsByDate);
@@ -30,15 +39,122 @@ export function TodayView() {
   const exportBackup = useQuestownStore((s) => s.exportBackup);
   const importBackup = useQuestownStore((s) => s.importBackup);
 
+  const reduceMotion = !!useReducedMotion();
+
   const percent = Math.round(record.completionRate * 100);
-  const streak = useMemo(() => getStreakCount(recordsByDate, currentDateKey, dailyGoal), [recordsByDate, currentDateKey, dailyGoal]);
-  const weekly = useMemo(() => getWeeklySummary(recordsByDate, currentDateKey, dailyGoal), [recordsByDate, currentDateKey, dailyGoal]);
+  const streak = useMemo(
+    () => getStreakCount(recordsByDate, currentDateKey, dailyGoal),
+    [recordsByDate, currentDateKey, dailyGoal]
+  );
+  const weekly = useMemo(
+    () => getWeeklySummary(recordsByDate, currentDateKey, dailyGoal),
+    [recordsByDate, currentDateKey, dailyGoal]
+  );
+  const weeklyPercent = Math.round(weekly.completionRate * 100);
+
+  const previousRef = useRef({
+    completedCount: record.completedCount,
+    isFinalized: record.isFinalized,
+    streak
+  });
 
   const feedback = useMemo(() => {
     if (record.completedCount === 0) return "첫 층을 올려볼까요?";
     if (record.completedCount >= dailyGoal) return "오늘 목표 달성! 멋져요 ✨";
     return cheers[record.completedCount % cheers.length];
   }, [record.completedCount, dailyGoal]);
+
+  const pushToast = useCallback((text: string, tone: RewardToastItem["tone"] = "info") => {
+    const id = toastIdRef.current;
+    toastIdRef.current += 1;
+
+    setToasts((prev) => [...prev, { id, text, tone }]);
+
+    const timeout = window.setTimeout(() => {
+      setToasts((prev) => prev.filter((toast) => toast.id !== id));
+    }, 2200);
+
+    timeoutRefs.current.push(timeout);
+  }, []);
+
+  const triggerAnimation = useCallback((type: QuestAnimationEventType) => {
+    setAnimationEvent((prev) => ({ type, token: prev.token + 1 }));
+  }, []);
+
+  const triggerReward = useCallback(
+    (type: QuestAnimationEventType, text: string, tone: RewardToastItem["tone"]) => {
+      triggerAnimation(type);
+      pushToast(text, tone);
+    },
+    [pushToast, triggerAnimation]
+  );
+
+  useEffect(() => {
+    return () => {
+      timeoutRefs.current.forEach((id) => window.clearTimeout(id));
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      previousRef.current = {
+        completedCount: record.completedCount,
+        isFinalized: record.isFinalized,
+        streak
+      };
+      return;
+    }
+
+    const prev = previousRef.current;
+    const queue: Array<{ type: QuestAnimationEventType; text: string; tone: RewardToastItem["tone"] }> = [];
+
+    if (record.completedCount > prev.completedCount) {
+      queue.push({
+        type: "todo-complete",
+        text: `🧱 ${record.completedCount}층 완성!`,
+        tone: "success"
+      });
+
+      if (prev.completedCount < dailyGoal && record.completedCount >= dailyGoal) {
+        queue.push({
+          type: "goal-reached",
+          text: "🎯 목표 달성! 오늘 타운이 빛나요",
+          tone: "epic"
+        });
+      }
+    }
+
+    if (!prev.isFinalized && record.isFinalized) {
+      queue.push({
+        type: "day-finalized",
+        text: `🏠 하루 마감 완료 (${percent}%)`,
+        tone: "info"
+      });
+    }
+
+    if (streak > prev.streak) {
+      queue.push({
+        type: "streak-up",
+        text: `🔥 ${streak}일 연속 달성!`,
+        tone: "epic"
+      });
+    }
+
+    queue.forEach((event, index) => {
+      const timeout = window.setTimeout(() => {
+        triggerReward(event.type, event.text, event.tone);
+      }, index * 240);
+
+      timeoutRefs.current.push(timeout);
+    });
+
+    previousRef.current = {
+      completedCount: record.completedCount,
+      isFinalized: record.isFinalized,
+      streak
+    };
+  }, [dailyGoal, percent, record.completedCount, record.isFinalized, streak, triggerReward]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -47,6 +163,7 @@ export function TodayView() {
       setMessage(result.reason ?? "추가에 실패했어요.");
       return;
     }
+
     setInput("");
     setMessage(null);
   };
@@ -59,10 +176,10 @@ export function TodayView() {
     const data = exportBackup();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `questown-backup-${currentDateKey}.json`;
-    a.click();
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `questown-backup-${currentDateKey}.json`;
+    anchor.click();
     URL.revokeObjectURL(url);
     setMessage("백업 파일을 저장했어요.");
   };
@@ -85,27 +202,36 @@ export function TodayView() {
 
   return (
     <div className="space-y-4">
-      <Card>
+      <RewardToasts toasts={toasts} />
+
+      <Card className="relative overflow-hidden">
+        <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
+
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-xl font-bold">Today · {record.date}</h2>
-          <span className="rounded-full bg-quest-grass px-3 py-1 text-sm font-semibold">{feedback}</span>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Daily</p>
+            <h2 className="text-xl font-black">Today · {record.date}</h2>
+          </div>
+          <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-sm font-semibold">{feedback}</span>
         </div>
 
         <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-2xl bg-orange-100 px-3 py-2 font-semibold">🔥 Streak {streak}일</div>
-          <div className="rounded-2xl bg-indigo-100 px-3 py-2 font-semibold">🎯 목표 {dailyGoal}개</div>
+          <div className="metric-pill bg-orange-100/80">🔥 Streak {streak}일</div>
+          <div className="metric-pill bg-indigo-100/80">🎯 목표 {dailyGoal}개</div>
         </div>
 
         {CssFramerBuildingRenderer.render({
           height,
           roofType: record.roofType,
-          finalized: record.isFinalized
+          finalized: record.isFinalized,
+          animationEvent,
+          reducedMotion: reduceMotion
         })}
 
         <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm">
-          <div className="rounded-2xl bg-slate-100 p-2">완료 {record.completedCount}</div>
-          <div className="rounded-2xl bg-slate-100 p-2">전체 {record.totalCount}</div>
-          <div className="rounded-2xl bg-slate-100 p-2">완료율 {percent}%</div>
+          <div className="metric-pill">완료 {record.completedCount}</div>
+          <div className="metric-pill">전체 {record.totalCount}</div>
+          <div className="metric-pill">완료율 {percent}%</div>
         </div>
 
         <div className="mt-2 text-center text-xs font-semibold text-slate-600">
@@ -113,13 +239,17 @@ export function TodayView() {
         </div>
 
         <div className="mt-3 grid grid-cols-2 gap-2">
-          <Button className="min-h-11 bg-quest-primary text-white" onClick={finalizeCurrentDay}>
+          <Button
+            className="min-h-11 bg-quest-primary text-white"
+            onClick={finalizeCurrentDay}
+            disabled={record.isFinalized}
+          >
             오늘 마감
           </Button>
-          <Button className="min-h-11 bg-slate-200" onClick={unfinalizeCurrentDay}>
+          <Button className="min-h-11 bg-slate-100" onClick={unfinalizeCurrentDay} disabled={!record.isFinalized}>
             마감 해제
           </Button>
-          <Button className="min-h-11 bg-quest-accent text-slate-900 col-span-2" onClick={goNextDayForDev}>
+          <Button className="col-span-2 min-h-11 bg-quest-accent text-slate-900" onClick={goNextDayForDev}>
             다음 날로 넘기기 (DEV)
           </Button>
         </div>
@@ -127,10 +257,23 @@ export function TodayView() {
 
       <Card>
         <h3 className="mb-2 text-base font-bold">이번 주 요약</h3>
-        <div className="grid grid-cols-3 gap-2 text-center text-sm">
-          <div className="rounded-2xl bg-slate-100 p-2">완료 {weekly.completed}</div>
-          <div className="rounded-2xl bg-slate-100 p-2">전체 {weekly.total}</div>
-          <div className="rounded-2xl bg-slate-100 p-2">성공일 {weekly.successfulDays}/7</div>
+        <div className="mb-2 grid grid-cols-3 gap-2 text-center text-sm">
+          <div className="metric-pill">완료 {weekly.completed}</div>
+          <div className="metric-pill">전체 {weekly.total}</div>
+          <div className="metric-pill">성공일 {weekly.successfulDays}/7</div>
+        </div>
+        <div className="soft-panel">
+          <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
+            <span>주간 페이스</span>
+            <span>{weeklyPercent}%</span>
+          </div>
+          <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-indigo-500"
+              animate={{ width: `${weeklyPercent}%` }}
+              transition={{ type: "spring", stiffness: 120, damping: 20 }}
+            />
+          </div>
         </div>
       </Card>
 
@@ -149,7 +292,7 @@ export function TodayView() {
           </Button>
         </form>
 
-        <div className="mb-3">
+        <div className="mb-3 soft-panel">
           <label className="mb-1 block text-sm font-semibold">일일 목표치 ({dailyGoal})</label>
           <input
             type="range"
@@ -157,7 +300,7 @@ export function TodayView() {
             max={10}
             value={dailyGoal}
             onChange={onGoalChange}
-            className="w-full"
+            className="w-full accent-indigo-500"
             aria-label="일일 목표치 설정"
           />
         </div>
@@ -166,7 +309,7 @@ export function TodayView() {
 
         <ul className="space-y-2">
           {record.todos.map((todo) => (
-            <li key={todo.id} className="flex items-center gap-2 rounded-2xl bg-slate-50 p-2">
+            <li key={todo.id} className="flex items-center gap-2 rounded-2xl bg-slate-50/80 p-2">
               <input
                 aria-label={`${todo.text} 완료 여부`}
                 type="checkbox"
@@ -175,6 +318,7 @@ export function TodayView() {
                 onChange={() => {
                   const result = toggleTodo(todo.id);
                   if (!result.ok) setMessage(result.reason ?? "수정할 수 없어요.");
+                  else setMessage(null);
                 }}
                 className="h-6 w-6"
               />
@@ -185,6 +329,7 @@ export function TodayView() {
                 onClick={() => {
                   const result = deleteTodo(todo.id);
                   if (!result.ok) setMessage(result.reason ?? "삭제할 수 없어요.");
+                  else setMessage(null);
                 }}
                 disabled={record.isFinalized}
               >
@@ -199,10 +344,10 @@ export function TodayView() {
       <Card>
         <h3 className="mb-2 text-base font-bold">백업 / 복원</h3>
         <div className="grid grid-cols-2 gap-2">
-          <Button className="min-h-11 bg-slate-200" onClick={onBackupExport}>
+          <Button className="min-h-11 bg-slate-100" onClick={onBackupExport}>
             JSON 백업
           </Button>
-          <Button className="min-h-11 bg-slate-200" onClick={() => fileInputRef.current?.click()}>
+          <Button className="min-h-11 bg-slate-100" onClick={() => fileInputRef.current?.click()}>
             JSON 복원
           </Button>
         </div>

@@ -7,13 +7,36 @@
 }
 
 body {
-  @apply bg-quest-sky text-slate-800;
+  @apply min-h-screen text-slate-800;
+  background:
+    radial-gradient(1200px 500px at 10% -20%, rgba(99, 102, 241, 0.28), transparent 45%),
+    radial-gradient(900px 420px at 90% -10%, rgba(16, 185, 129, 0.24), transparent 40%),
+    linear-gradient(180deg, #e8f7ff 0%, #d9f3ff 32%, #d9f7e8 100%);
 }
 
 .card {
-  @apply rounded-3xl bg-white p-4 shadow-bubbly;
+  @apply rounded-3xl border border-white/80 bg-white/85 p-4 shadow-[0_12px_32px_rgba(15,23,42,0.08)] backdrop-blur-md;
 }
 
 .bubble-btn {
-  @apply rounded-2xl px-4 py-3 font-semibold transition active:translate-y-[2px];
+  @apply rounded-2xl border border-slate-200/70 px-4 py-3 font-semibold text-slate-700 shadow-[0_4px_0_rgba(15,23,42,0.12)] transition-all active:translate-y-[2px] active:shadow-[0_2px_0_rgba(15,23,42,0.12)] disabled:cursor-not-allowed disabled:opacity-60;
+}
+
+.metric-pill {
+  @apply rounded-2xl border border-white/70 bg-white/80 px-3 py-2 text-sm font-semibold;
+}
+
+.soft-panel {
+  @apply rounded-2xl border border-white/60 bg-white/60 p-3;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -24,24 +24,28 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-xl space-y-4 px-4 py-6">
-      <Card className="bg-quest-primary text-white">
-        <h1 className="text-2xl font-black">🏙️ Questown</h1>
-        <p className="text-sm text-blue-100">할 일을 완료하고 오늘의 건물을 키워보세요.</p>
+      <Card className="relative overflow-hidden bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 text-white">
+        <div className="pointer-events-none absolute -right-8 -top-12 h-32 w-32 rounded-full bg-white/20 blur-xl" />
+        <div className="pointer-events-none absolute -left-10 bottom-0 h-24 w-24 rounded-full bg-white/10 blur-lg" />
+        <h1 className="text-2xl font-black tracking-tight">🏙️ Questown</h1>
+        <p className="mt-1 text-sm text-blue-100">할 일을 완료하고, 오늘의 건물을 성장시키세요.</p>
       </Card>
 
-      <Card className="flex gap-2">
-        <Button
-          className={`flex-1 ${currentTab === "today" ? "bg-quest-primary text-white" : "bg-slate-100"}`}
-          onClick={() => setTab("today")}
-        >
-          Today
-        </Button>
-        <Button
-          className={`flex-1 ${currentTab === "town" ? "bg-quest-primary text-white" : "bg-slate-100"}`}
-          onClick={() => setTab("town")}
-        >
-          Town
-        </Button>
+      <Card className="p-2">
+        <div className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
+          <Button
+            className={`min-h-11 ${currentTab === "today" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
+            onClick={() => setTab("today")}
+          >
+            Today
+          </Button>
+          <Button
+            className={`min-h-11 ${currentTab === "town" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
+            onClick={() => setTab("town")}
+          >
+            Town
+          </Button>
+        </div>
       </Card>
 
       {currentTab === "today" ? <TodayView /> : <MonthlyTownView />}
