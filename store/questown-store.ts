@@ -52,7 +52,7 @@ export const useQuestownStore = create<QuestownState>()(
       setTab: (tab) => set({ currentTab: tab }),
       addTodo: (text) => {
         if (!text.trim()) return;
-        const dateKey = toDateKey();
+        const dateKey = get().currentDateKey;
         const today = getTodayRecord(get().recordsByDate, dateKey);
         const next = recalc({
           ...today,
@@ -133,10 +133,13 @@ export const useQuestownStore = create<QuestownState>()(
       moveMonth: (delta) => set((state) => ({ selectedMonth: addMonths(state.selectedMonth, delta) })),
       selectDateInTown: (date) => set({ selectedDateInTown: date }),
       hydrateToday: () => {
-        const dateKey = toDateKey();
+        const actualTodayKey = toDateKey();
+        const activeDateKey = get().currentDateKey || actualTodayKey;
+        const dateKey = activeDateKey < actualTodayKey ? actualTodayKey : activeDateKey;
         const rec = getTodayRecord(get().recordsByDate, dateKey);
         set((state) => ({
-          selectedMonth: toMonthKey(),
+          currentDateKey: dateKey,
+          selectedMonth: toMonthKey(new Date(`${dateKey}T00:00:00`)),
           recordsByDate: { ...state.recordsByDate, [dateKey]: recalc(rec, rec.isFinalized) }
         }));
       }
@@ -160,8 +163,3 @@ export const useTodayBuildingHeight = () =>
     const record = state.recordsByDate[key] ?? ensureDailyRecord(key);
     return getBuildingHeight(record.completedCount);
   });
-gHeight = () => useQuestownStore((state) => {
-  const key = toDateKey();
-  const record = state.recordsByDate[key] ?? ensureDailyRecord(key);
-  return getBuildingHeight(record.completedCount);
-});
