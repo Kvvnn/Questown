@@ -10,10 +10,17 @@ export default function HomePage() {
   const currentTab = useQuestownStore((s) => s.currentTab);
   const setTab = useQuestownStore((s) => s.setTab);
   const hydrateToday = useQuestownStore((s) => s.hydrateToday);
+  const rolloverToToday = useQuestownStore((s) => s.rolloverToToday);
 
   useEffect(() => {
     hydrateToday();
-  }, [hydrateToday]);
+
+    const id = setInterval(() => {
+      rolloverToToday();
+    }, 60_000);
+
+    return () => clearInterval(id);
+  }, [hydrateToday, rolloverToToday]);
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-xl space-y-4 px-4 py-6">

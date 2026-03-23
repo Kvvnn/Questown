@@ -23,4 +23,15 @@ export interface MonthlyTown {
   dailyRecords: DailyRecord[];
 }
 
+export interface AppBackupData {
+  version: number;
+  exportedAt: string;
+  state: {
+    currentDateKey: string;
+    selectedMonth: string;
+    dailyGoal: number;
+    recordsByDate: Record<string, DailyRecord>;
+  };
+}
+
 export type TabType = "today" | "town";
