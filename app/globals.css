@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-quest-sky text-slate-800;
+}
+
+.card {
+  @apply rounded-3xl bg-white p-4 shadow-bubbly;
+}
+
+.bubble-btn {
+  @apply rounded-2xl px-4 py-3 font-semibold transition active:translate-y-[2px];
+}

@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+
+# Node / Next
+node_modules/
+.next/
+out/
+
+# Env
+.env
+.env.*
+
+# Python cache
+__pycache__/
+
+# Logs / reports
+logs/
+reports/
+
+# OpenClaw runtime dir
+.openclaw/
+
+# Workspace unrelated project artifacts
+notion-thumbnail-migrator/node_modules/
+notion-thumbnail-migrator/downloads/
+notion-thumbnail-migrator/.env
