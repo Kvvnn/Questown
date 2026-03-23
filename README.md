@@ -10,7 +10,7 @@ Duolingo-inspired 게임형 Todo 웹앱입니다.
 - 자정 자동 날짜 롤오버
 - Streak(연속 달성일) + 일일 목표치
 - 주간 요약 카드
-- Town 뷰(캘린더형이 아닌 district 기반 타운 뷰)
+- Town 뷰(도시 장면 렌더: district/road/scenery/camera focus)
 - 이벤트 기반 모션(완료/목표달성/연속달성/마감)
 - 리워드 토스트 + 보상 시퀀스
 - JSON 백업/복원
@@ -41,7 +41,7 @@ npm run build
 
 ## 아키텍처
 - `components/`: UI/화면 컴포넌트
-- `domain/`: 타입 + 계산 유틸(building/date/progress/animation)
+- `domain/`: 타입 + 계산 유틸(building/date/progress/animation/town-map)
 - `store/`: 상태/저장 로직(Zustand)
 - `app/`: 엔트리 페이지, 탭 라우팅
 
@@ -62,6 +62,7 @@ npm run build
 - `domain/`
   - `types.ts`
   - `animation.ts`
+  - `town-map.ts` / `town-map.test.ts`
   - `building.ts` / `building.test.ts`
   - `date.ts` / `date.test.ts`
   - `progress.ts` / `progress.test.ts`
