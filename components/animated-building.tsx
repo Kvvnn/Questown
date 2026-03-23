@@ -1,9 +1,10 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { QuestAnimationEvent } from "@/domain/animation";
-import { RoofType } from "@/domain/types";
+import { getFloorVisualStyle } from "@/domain/floor-style";
+import { QuestType, RoofType } from "@/domain/types";
 
 export interface AnimatedBuildingRenderer {
   render: (props: BuildingRenderProps) => ReactNode;
@@ -15,18 +16,13 @@ export interface BuildingRenderProps {
   finalized?: boolean;
   animationEvent?: QuestAnimationEvent;
   reducedMotion?: boolean;
+  completedQuestTypes?: QuestType[];
 }
 
 const roofColorMap: Record<Exclude<RoofType, "none">, string> = {
   low: "border-b-orange-400",
   mid: "border-b-amber-500",
   high: "border-b-emerald-500"
-};
-
-const floorPalette = {
-  calm: "from-blue-300 to-blue-400",
-  energized: "from-indigo-400 to-blue-500",
-  epic: "from-fuchsia-400 to-indigo-500"
 };
 
 const burstParticles = [
@@ -40,27 +36,18 @@ const burstParticles = [
   { x: 0, y: -42, delay: 0.12 }
 ];
 
-const getFloorMode = (eventType: QuestAnimationEvent["type"] | undefined) => {
-  if (eventType === "goal-reached" || eventType === "streak-up") return floorPalette.epic;
-  if (eventType === "todo-complete") return floorPalette.energized;
-  return floorPalette.calm;
-};
-
-const getContainerAnimation = (
-  eventType: QuestAnimationEvent["type"] | undefined,
-  reducedMotion: boolean
-) => {
+const getContainerAnimation = (eventType: QuestAnimationEvent["type"] | undefined, reducedMotion: boolean) => {
   if (reducedMotion || !eventType || eventType === "idle") return { y: 0, scale: 1, rotate: 0 };
 
   switch (eventType) {
-    case "todo-complete":
-      return { y: [0, -4, 0], scale: [1, 1.01, 1], rotate: [0, 0.2, 0] };
+    case "quest-complete":
+      return { y: [0, -5, 0], scale: [1, 1.02, 1], rotate: [0, 0.3, 0] };
     case "goal-reached":
-      return { y: [0, -6, 0], scale: [1, 1.05, 1], rotate: [0, -0.3, 0.2, 0] };
+      return { y: [0, -8, 0], scale: [1, 1.06, 1], rotate: [0, -0.4, 0.2, 0] };
     case "streak-up":
-      return { y: [0, -5, 0], scale: [1, 1.04, 1], rotate: [0, 0.6, -0.5, 0] };
+      return { y: [0, -6, 0], scale: [1, 1.05, 1], rotate: [0, 0.6, -0.5, 0] };
     case "day-finalized":
-      return { y: [0, -3, 0], scale: [1, 1.02, 1], rotate: [0, -0.2, 0] };
+      return { y: [0, -4, 0], scale: [1, 1.03, 1], rotate: [0, -0.2, 0] };
     default:
       return { y: 0, scale: 1, rotate: 0 };
   }
@@ -69,20 +56,33 @@ const getContainerAnimation = (
 const getGlowClass = (eventType: QuestAnimationEvent["type"] | undefined) => {
   if (eventType === "goal-reached") return "from-amber-200/70 to-fuchsia-200/40";
   if (eventType === "streak-up") return "from-orange-200/70 to-indigo-200/40";
-  if (eventType === "todo-complete") return "from-sky-200/70 to-emerald-200/40";
+  if (eventType === "quest-complete") return "from-sky-200/70 to-emerald-200/40";
   if (eventType === "day-finalized") return "from-emerald-200/70 to-cyan-200/40";
   return "from-transparent to-transparent";
 };
 
+const fallbackQuestType = (index: number): QuestType => {
+  const order: QuestType[] = ["daily", "main", "sub"];
+  return order[index % order.length];
+};
+
 export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
-  render: ({ height, roofType, finalized, animationEvent, reducedMotion = false }) => {
+  render: ({
+    height,
+    roofType,
+    finalized,
+    animationEvent,
+    reducedMotion = false,
+    completedQuestTypes = []
+  }) => {
     const eventType = animationEvent?.type;
-    const floorMode = getFloorMode(eventType);
     const showBurst =
       !reducedMotion &&
       eventType !== "idle" &&
       eventType !== undefined &&
       (eventType === "goal-reached" || eventType === "day-finalized" || eventType === "streak-up");
+
+    const floorTypes = Array.from({ length: height }).map((_, idx) => completedQuestTypes[idx] ?? fallbackQuestType(idx));
 
     return (
       <motion.div
@@ -90,7 +90,9 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
         animate={getContainerAnimation(eventType, reducedMotion)}
         transition={{ type: "spring", stiffness: 230, damping: 17 }}
       >
-        <div className={`pointer-events-none absolute inset-0 rounded-full bg-gradient-to-b ${getGlowClass(eventType)} blur-xl`} />
+        <div
+          className={`pointer-events-none absolute inset-0 rounded-full bg-gradient-to-b ${getGlowClass(eventType)} blur-xl`}
+        />
 
         <AnimatePresence>
           {showBurst ? (
@@ -134,19 +136,27 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
 
         <div className="flex w-full flex-col-reverse items-center gap-1">
           <AnimatePresence>
-            {Array.from({ length: height }).map((_, idx) => {
-              const isTopFloor = idx === height - 1;
+            {floorTypes.map((floorType, idx) => {
+              const floorVisual = getFloorVisualStyle(floorType);
+              const isTopFloor = idx === floorTypes.length - 1;
+
               return (
                 <motion.div
                   key={`floor-${idx}`}
                   initial={reducedMotion ? false : { y: 16, opacity: 0, scale: 0.92 }}
                   animate={{ y: 0, opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, y: 10 }}
-                  transition={{ type: "spring", stiffness: 280, damping: 18, delay: reducedMotion ? 0 : idx * 0.03 }}
-                  className={`relative h-6 w-24 overflow-hidden rounded-md border-2 border-white/80 bg-gradient-to-r ${floorMode} ${isTopFloor && eventType === "todo-complete" ? "ring-2 ring-cyan-200" : ""}`}
+                  transition={{
+                    type: "spring",
+                    stiffness: 280,
+                    damping: 18,
+                    delay: reducedMotion ? 0 : idx * 0.03
+                  }}
+                  className={`relative h-6 w-24 overflow-hidden rounded-md border-2 border-white/80 bg-gradient-to-r ${floorVisual.gradientClass} ${isTopFloor && eventType === "quest-complete" ? "ring-2 ring-cyan-200" : ""}`}
                 >
                   <span className="absolute left-1 top-1 h-1.5 w-1.5 rounded-full bg-white/70" />
                   <span className="absolute right-2 top-1 h-1.5 w-1.5 rounded-full bg-white/60" />
+                  <span className="absolute bottom-0 right-1 text-[9px] opacity-90">{floorVisual.icon}</span>
                 </motion.div>
               );
             })}

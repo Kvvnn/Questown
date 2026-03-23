@@ -4,12 +4,14 @@ import { DailyRecord } from "./types";
 
 const rec = (date: string, completedCount: number, totalCount: number, isFinalized = true): DailyRecord => ({
   date,
-  todos: [],
+  quests: [],
   completedCount,
   totalCount,
   completionRate: totalCount > 0 ? completedCount / totalCount : 0,
   roofType: "mid",
-  isFinalized
+  isFinalized,
+  completedByType: { daily: completedCount, main: 0, sub: 0 },
+  totalByType: { daily: totalCount, main: 0, sub: 0 }
 });
 
 describe("progress utils", () => {

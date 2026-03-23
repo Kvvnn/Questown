@@ -1,6 +1,6 @@
 export type QuestAnimationEventType =
   | "idle"
-  | "todo-complete"
+  | "quest-complete"
   | "goal-reached"
   | "day-finalized"
   | "streak-up";

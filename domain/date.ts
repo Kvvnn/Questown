@@ -1,3 +1,4 @@
+import { emptyQuestTypeCounter } from "./quest";
 import { DailyRecord } from "./types";
 
 const APP_TIME_ZONE = "Asia/Seoul";
@@ -47,10 +48,12 @@ export const addMonths = (monthKey: string, delta: number) => {
 
 export const ensureDailyRecord = (dateKey: string): DailyRecord => ({
   date: dateKey,
-  todos: [],
+  quests: [],
   completedCount: 0,
   totalCount: 0,
   completionRate: 0,
   roofType: "none",
-  isFinalized: false
+  isFinalized: false,
+  completedByType: emptyQuestTypeCounter(),
+  totalByType: emptyQuestTypeCounter()
 });

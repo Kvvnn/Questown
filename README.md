@@ -1,29 +1,21 @@
-# Questown MVP+
+# Questown MVP
 
-Duolingo-inspired 게임형 Todo 웹앱입니다.
+Questown은 하루를 **퀘스트 로그**처럼 느끼게 만드는 게임형 생산성 웹앱입니다.
 
-## 주요 기능
-- Today Todo 관리 (추가/체크/삭제)
-- 완료 Todo = 건물 층수 실시간 반영
-- 하루 마감 시 완료율 기반 지붕 확정
-- 마감 후 수정 잠금 + 마감 해제
-- 자정 자동 날짜 롤오버
-- Streak(연속 달성일) + 일일 목표치
-- 주간 요약 카드
-- Town 뷰(도시 장면 렌더: district/road/scenery/camera focus)
-- 이벤트 기반 모션(완료/목표달성/연속달성/마감)
-- 리워드 토스트 + 보상 시퀀스
-- 접근성 개선(탭/패널 시맨틱, 라이브 리전, 키보드 Town 이동)
-- Animated number 카운터 + dynamic 탭 로딩 최적화
-- JSON 백업/복원
+## 핵심 구조
+- 완료한 퀘스트 1개 = 건물 1층
+- 하루 완료율 = 지붕 타입(low/mid/high)
+- 퀘스트 타입(daily/main/sub) = 각 층의 시각 스타일
+
+세 규칙은 서로 분리되어 동작합니다.
 
 ## 기술 스택
 - Next.js (App Router)
 - TypeScript
 - Tailwind CSS
-- Zustand (localStorage persist + migrate)
+- Zustand (localStorage persist)
 - Framer Motion
-- Vitest (domain 유틸 테스트)
+- Vitest
 
 ## 실행 방법
 ```bash
@@ -36,25 +28,16 @@ npm run dev
 npm run test
 ```
 
-빌드:
+프로덕션 빌드:
 ```bash
 npm run build
 ```
 
-## 아키텍처
-- `components/`: UI/화면 컴포넌트
-- `domain/`: 타입 + 계산 유틸(building/date/progress/animation/town-map/town-navigation)
-- `store/`: 상태/저장 로직(Zustand)
-- `app/`: 엔트리 페이지, 탭 라우팅
-
-핵심 분리 원칙:
-- 층수/완료율/지붕 계산 분리
-- 날짜 처리 유틸 분리
-- 저장 로직(store)과 UI 분리
-
 ## 폴더 구조
 - `app/`
-  - `layout.tsx`, `page.tsx`, `globals.css`
+  - `layout.tsx`
+  - `page.tsx`
+  - `globals.css`
 - `components/`
   - `today-view.tsx`
   - `monthly-town-view.tsx`
@@ -63,22 +46,43 @@ npm run build
   - `reward-toasts.tsx`
   - `ui.tsx`
 - `domain/`
-  - `types.ts`
-  - `animation.ts`
+  - `types.ts` (Quest 중심 모델)
+  - `date.ts` / `date.test.ts`
+  - `building.ts` / `building.test.ts`
+  - `quest.ts` / `quest.test.ts`
+  - `floor-style.ts` / `floor-style.test.ts`
+  - `progress.ts` / `progress.test.ts`
   - `town-map.ts` / `town-map.test.ts`
   - `town-navigation.ts` / `town-navigation.test.ts`
-  - `building.ts` / `building.test.ts`
-  - `date.ts` / `date.test.ts`
-  - `progress.ts` / `progress.test.ts`
-- `store/questown-store.ts`
-- `lib/utils.ts`
+  - `animation.ts`
+- `store/`
+  - `questown-store.ts`
 
-## 배포 메모
-- Vercel CLI 배포 가능
-- GitHub private repo 자동 연동은 Vercel 프로젝트에서 repo 권한 승인 후 활성화 권장
+## 주요 기능
+- Today 화면 3분할 섹션
+  - Daily Quest (유지)
+  - Main Quest (전진, 강조)
+  - Sub Quest (성장)
+- 퀘스트 추가/완료/삭제 + 타입 선택
+- 체크 시 즉시 피드백 토스트 + building 애니메이션
+- 하루 마감 시 완료율 기반 지붕 연출
+- Town 화면에서 월간 도시 맵 + 날짜 상세
+- 날짜 상세에 완료율, 타입별 요약, 퀘스트 목록 제공
+- localStorage 영속화 + 백업/복원 JSON
+- 키보드 Town 이동(화살표, Home/End)
 
-## 다음 확장 아이디어
-- Rive 렌더러 어댑터
-- 서버 동기화(멀티 디바이스)
-- 시즌 이벤트/특수 건물/보상 아이템
-- 접근성 고도화(키보드 동선/스크린리더)
+## 데이터 모델
+- `QuestType = "daily" | "main" | "sub"`
+- `QuestItem`
+  - `id, title, type, completed, createdAt, completedAt?, isRecurring?, recurrenceKey?`
+- `DailyRecord`
+  - `date, quests, completedCount, totalCount, completionRate, roofType, isFinalized`
+  - `completedByType, totalByType`
+- `MonthlyTown`
+  - `monthKey, dailyRecords`
+
+## 확장 아이디어
+- recurring quest 자동 생성 스케줄러
+- streak 보상 배지/도시 랜드마크 시스템
+- Rive 렌더러 어댑터(현재 애니메이션 추상화 기반)
+- 서버 동기화 및 멀티 디바이스

@@ -7,16 +7,33 @@ import { CssFramerBuildingRenderer } from "@/components/animated-building";
 import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button, Card } from "@/components/ui";
 import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
+import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getStreakCount, getWeeklySummary } from "@/domain/progress";
-import { AppBackupData } from "@/domain/types";
+import { getCompletedQuestTypes, questTypeLabel, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
+import { AppBackupData, QuestItem, QuestType } from "@/domain/types";
 import { useQuestownStore, useTodayBuildingHeight, useTodayRecord } from "@/store/questown-store";
 
-const cheers = ["좋아, 1층 완성!", "오늘 town이 자라고 있어요", "지붕까지 거의 다 왔어요"];
+const sectionDescription: Record<QuestType, string> = {
+  daily: "삶의 유지 · 루틴 리듬",
+  main: "오늘의 전진 · 핵심 진도",
+  sub: "미래 확장 · 성장 축적"
+};
+
+const sectionOrder: QuestType[] = ["daily", "main", "sub"];
+
+const upbeatMessages = ["좋아, +1 Floor!", "Quest Complete!", "오늘 town이 자라고 있어요"];
+
+const getRoofFeedback = (completionRate: number) => {
+  if (completionRate >= 0.8) return "🏆 High Roof! 오늘 하루 정말 잘 마무리했어요.";
+  if (completionRate >= 0.4) return "👍 Mid Roof! 내일 한 걸음 더 가봐요.";
+  return "🌤️ Low Roof! 그래도 오늘의 건물은 세워졌어요.";
+};
 
 export function TodayView() {
   const record = useTodayRecord();
   const height = useTodayBuildingHeight();
-  const [input, setInput] = useState("");
+  const [titleInput, setTitleInput] = useState("");
+  const [selectedType, setSelectedType] = useState<QuestType>("main");
   const [message, setMessage] = useState<string | null>(null);
   const [toasts, setToasts] = useState<RewardToastItem[]>([]);
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
@@ -27,19 +44,19 @@ export function TodayView() {
   const initializedRef = useRef(false);
   const toastIdRef = useRef(1);
 
-  const dailyGoal = useQuestownStore((s) => s.dailyGoal);
-  const recordsByDate = useQuestownStore((s) => s.recordsByDate);
-  const currentDateKey = useQuestownStore((s) => s.currentDateKey);
+  const dailyGoal = useQuestownStore((state) => state.dailyGoal);
+  const recordsByDate = useQuestownStore((state) => state.recordsByDate);
+  const currentDateKey = useQuestownStore((state) => state.currentDateKey);
 
-  const addTodo = useQuestownStore((s) => s.addTodo);
-  const toggleTodo = useQuestownStore((s) => s.toggleTodo);
-  const deleteTodo = useQuestownStore((s) => s.deleteTodo);
-  const finalizeCurrentDay = useQuestownStore((s) => s.finalizeCurrentDay);
-  const unfinalizeCurrentDay = useQuestownStore((s) => s.unfinalizeCurrentDay);
-  const goNextDayForDev = useQuestownStore((s) => s.goNextDayForDev);
-  const setDailyGoal = useQuestownStore((s) => s.setDailyGoal);
-  const exportBackup = useQuestownStore((s) => s.exportBackup);
-  const importBackup = useQuestownStore((s) => s.importBackup);
+  const addQuest = useQuestownStore((state) => state.addQuest);
+  const toggleQuest = useQuestownStore((state) => state.toggleQuest);
+  const deleteQuest = useQuestownStore((state) => state.deleteQuest);
+  const finalizeCurrentDay = useQuestownStore((state) => state.finalizeCurrentDay);
+  const unfinalizeCurrentDay = useQuestownStore((state) => state.unfinalizeCurrentDay);
+  const goNextDayForDev = useQuestownStore((state) => state.goNextDayForDev);
+  const setDailyGoal = useQuestownStore((state) => state.setDailyGoal);
+  const exportBackup = useQuestownStore((state) => state.exportBackup);
+  const importBackup = useQuestownStore((state) => state.importBackup);
 
   const reduceMotion = !!useReducedMotion();
 
@@ -53,6 +70,21 @@ export function TodayView() {
     [recordsByDate, currentDateKey, dailyGoal]
   );
   const weeklyPercent = Math.round(weekly.completionRate * 100);
+  const completedQuestTypes = useMemo(() => getCompletedQuestTypes(record.quests), [record.quests]);
+
+  const questsByType = useMemo(() => {
+    return sectionOrder.reduce<Record<QuestType, QuestItem[]>>(
+      (acc, type) => {
+        acc[type] = record.quests.filter((quest) => quest.type === type);
+        return acc;
+      },
+      {
+        daily: [],
+        main: [],
+        sub: []
+      }
+    );
+  }, [record.quests]);
 
   const previousRef = useRef({
     completedCount: record.completedCount,
@@ -61,10 +93,10 @@ export function TodayView() {
   });
 
   const feedback = useMemo(() => {
-    if (record.completedCount === 0) return "첫 층을 올려볼까요?";
-    if (record.completedCount >= dailyGoal) return "오늘 목표 달성! 멋져요 ✨";
-    return cheers[record.completedCount % cheers.length];
-  }, [record.completedCount, dailyGoal]);
+    if (record.completedCount === 0) return "첫 퀘스트를 완료하고 1층을 올려보세요.";
+    if (record.completedCount >= dailyGoal) return "오늘 목표 달성! 마감하면 지붕이 완성돼요.";
+    return upbeatMessages[record.completedCount % upbeatMessages.length];
+  }, [dailyGoal, record.completedCount]);
 
   const clearEventQueue = useCallback(() => {
     eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
@@ -120,15 +152,15 @@ export function TodayView() {
 
     if (record.completedCount > prev.completedCount) {
       queue.push({
-        type: "todo-complete",
-        text: `🧱 ${record.completedCount}층 완성!`,
+        type: "quest-complete",
+        text: "+1 Floor · Quest Complete",
         tone: "success"
       });
 
       if (prev.completedCount < dailyGoal && record.completedCount >= dailyGoal) {
         queue.push({
           type: "goal-reached",
-          text: "🎯 목표 달성! 오늘 타운이 빛나요",
+          text: "🎯 Daily Goal Complete",
           tone: "epic"
         });
       }
@@ -137,15 +169,15 @@ export function TodayView() {
     if (!prev.isFinalized && record.isFinalized) {
       queue.push({
         type: "day-finalized",
-        text: `🏠 하루 마감 완료 (${percent}%)`,
-        tone: "info"
+        text: getRoofFeedback(record.completionRate),
+        tone: record.completionRate >= 0.8 ? "epic" : "info"
       });
     }
 
     if (streak > prev.streak) {
       queue.push({
         type: "streak-up",
-        text: `🔥 ${streak}일 연속 달성!`,
+        text: `🔥 ${streak}일 연속 퀘스트 달성!`,
         tone: "epic"
       });
     }
@@ -165,17 +197,25 @@ export function TodayView() {
       isFinalized: record.isFinalized,
       streak
     };
-  }, [clearEventQueue, dailyGoal, percent, record.completedCount, record.isFinalized, streak, triggerReward]);
+  }, [
+    clearEventQueue,
+    dailyGoal,
+    record.completedCount,
+    record.completionRate,
+    record.isFinalized,
+    streak,
+    triggerReward
+  ]);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    const result = addTodo(input);
+    const result = addQuest(titleInput, selectedType);
     if (!result.ok) {
       setMessage(result.reason ?? "추가에 실패했어요.");
       return;
     }
 
-    setInput("");
+    setTitleInput("");
     setMessage(null);
   };
 
@@ -211,6 +251,69 @@ export function TodayView() {
     }
   };
 
+  const renderQuestSection = (type: QuestType) => {
+    const quests = questsByType[type];
+    const visual = getFloorVisualStyle(type);
+    const isMain = type === "main";
+
+    return (
+      <section
+        key={type}
+        className={`rounded-2xl border border-white/70 p-3 ${isMain ? "bg-purple-50/85 shadow" : "bg-white/70"}`}
+      >
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-black text-slate-800">
+              {visual.icon} {questTypeLabel[type]}
+            </h4>
+            <p className="text-xs text-slate-500">{sectionDescription[type]}</p>
+          </div>
+          <span className={`rounded-full px-2 py-1 text-xs font-bold ${visual.badgeClass}`}>
+            {record.completedByType[type]}/{record.totalByType[type]}
+          </span>
+        </div>
+
+        {quests.length === 0 ? (
+          <p className="rounded-xl bg-white/80 px-2 py-2 text-xs text-slate-500">아직 등록된 퀘스트가 없어요.</p>
+        ) : (
+          <ul className="space-y-2">
+            {quests.map((quest) => (
+              <li key={quest.id} className="flex items-center gap-2 rounded-xl bg-white/80 p-2">
+                <input
+                  aria-label={`${quest.title} 완료 여부`}
+                  type="checkbox"
+                  checked={quest.completed}
+                  disabled={record.isFinalized}
+                  onChange={() => {
+                    const result = toggleQuest(quest.id);
+                    if (!result.ok) setMessage(result.reason ?? "수정할 수 없어요.");
+                    else setMessage(null);
+                  }}
+                  className="h-5 w-5"
+                />
+                <span className={`flex-1 text-sm ${quest.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
+                  {quest.title}
+                </span>
+                <Button
+                  aria-label={`${quest.title} 삭제`}
+                  className="min-h-10 bg-quest-danger px-3 py-2 text-white"
+                  disabled={record.isFinalized}
+                  onClick={() => {
+                    const result = deleteQuest(quest.id);
+                    if (!result.ok) setMessage(result.reason ?? "삭제할 수 없어요.");
+                    else setMessage(null);
+                  }}
+                >
+                  삭제
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    );
+  };
+
   return (
     <div className="space-y-4" id="today-panel-content">
       <RewardToasts toasts={toasts} />
@@ -220,7 +323,7 @@ export function TodayView() {
 
         <div className="mb-3 flex items-center justify-between gap-2">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Daily</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Daily Log</p>
             <h2 id="today-title" className="text-xl font-black">
               Today · {record.date}
             </h2>
@@ -242,7 +345,8 @@ export function TodayView() {
           roofType: record.roofType,
           finalized: record.isFinalized,
           animationEvent,
-          reducedMotion: reduceMotion
+          reducedMotion: reduceMotion,
+          completedQuestTypes
         })}
 
         <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm" aria-live="polite">
@@ -279,6 +383,74 @@ export function TodayView() {
       </Card>
 
       <Card>
+        <h3 className="mb-2 text-base font-bold">퀘스트 추가</h3>
+        <form onSubmit={onSubmit} className="mb-3 space-y-2" aria-describedby="quest-input-hint">
+          <div className="grid grid-cols-3 gap-2">
+            {questTypeOrder.map((type) => {
+              const visual = getFloorVisualStyle(type);
+              const active = selectedType === type;
+              return (
+                <button
+                  key={type}
+                  type="button"
+                  onClick={() => setSelectedType(type)}
+                  className={`min-h-11 rounded-xl border px-2 py-2 text-sm font-bold transition ${
+                    active
+                      ? `${visual.badgeClass} border-transparent`
+                      : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {visual.icon} {questTypeShortLabel[type]}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              aria-label="새 퀘스트 입력"
+              value={titleInput}
+              maxLength={80}
+              onChange={(e) => setTitleInput(e.target.value)}
+              placeholder="예: 오늘 편집본 완성"
+              className="min-h-11 flex-1 rounded-2xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-quest-primary"
+            />
+            <Button type="submit" className="min-h-11 bg-quest-primary text-white">
+              추가
+            </Button>
+          </div>
+        </form>
+
+        <p id="quest-input-hint" className="text-xs text-slate-500">
+          Daily/Main/Sub 중 타입을 먼저 고르고 퀘스트를 추가하세요.
+        </p>
+
+        <div className="mt-3 soft-panel">
+          <label className="mb-1 block text-sm font-semibold">일일 목표치 ({dailyGoal})</label>
+          <input
+            type="range"
+            min={1}
+            max={10}
+            value={dailyGoal}
+            onChange={onGoalChange}
+            className="w-full accent-indigo-500"
+            aria-label="일일 목표치 설정"
+          />
+        </div>
+
+        {message ? (
+          <p role="status" aria-live="polite" className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-sm">
+            {message}
+          </p>
+        ) : null}
+      </Card>
+
+      <Card>
+        <h3 className="mb-2 text-base font-bold">퀘스트 섹션</h3>
+        <div className="space-y-3">{sectionOrder.map((type) => renderQuestSection(type))}</div>
+      </Card>
+
+      <Card>
         <h3 className="mb-2 text-base font-bold">이번 주 요약</h3>
         <div className="mb-2 grid grid-cols-3 gap-2 text-center text-sm">
           <div className="metric-pill">
@@ -291,6 +463,7 @@ export function TodayView() {
             성공일 <AnimatedNumber value={weekly.successfulDays} />/7
           </div>
         </div>
+
         <div className="soft-panel">
           <div className="mb-1 flex items-center justify-between text-xs font-semibold text-slate-600">
             <span>주간 페이스</span>
@@ -306,77 +479,6 @@ export function TodayView() {
             />
           </div>
         </div>
-      </Card>
-
-      <Card>
-        <form onSubmit={onSubmit} className="mb-3 flex gap-2" aria-describedby="todo-input-hint">
-          <input
-            aria-label="새 할 일 입력"
-            value={input}
-            maxLength={80}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="할 일을 입력하세요"
-            className="min-h-11 flex-1 rounded-2xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-quest-primary"
-          />
-          <Button type="submit" className="min-h-11 bg-quest-primary text-white">
-            추가
-          </Button>
-        </form>
-        <p id="todo-input-hint" className="mb-3 text-xs text-slate-500">
-          같은 문장은 중복 추가되지 않으며, 최대 80자까지 입력할 수 있어요.
-        </p>
-
-        <div className="mb-3 soft-panel">
-          <label className="mb-1 block text-sm font-semibold">일일 목표치 ({dailyGoal})</label>
-          <input
-            type="range"
-            min={1}
-            max={10}
-            value={dailyGoal}
-            onChange={onGoalChange}
-            className="w-full accent-indigo-500"
-            aria-label="일일 목표치 설정"
-          />
-        </div>
-
-        {message ? (
-          <p role="status" aria-live="polite" className="mb-3 rounded-xl bg-slate-100 px-3 py-2 text-sm">
-            {message}
-          </p>
-        ) : null}
-
-        <ul className="space-y-2">
-          {record.todos.map((todo) => (
-            <li key={todo.id} className="flex items-center gap-2 rounded-2xl bg-slate-50/80 p-2">
-              <input
-                aria-label={`${todo.text} 완료 여부`}
-                type="checkbox"
-                checked={todo.completed}
-                disabled={record.isFinalized}
-                onChange={() => {
-                  const result = toggleTodo(todo.id);
-                  if (!result.ok) setMessage(result.reason ?? "수정할 수 없어요.");
-                  else setMessage(null);
-                }}
-                className="h-6 w-6"
-              />
-              <span className={`flex-1 ${todo.completed ? "text-slate-400 line-through" : ""}`}>{todo.text}</span>
-              <Button
-                aria-label={`${todo.text} 삭제`}
-                className="min-h-11 bg-quest-danger px-3 py-2 text-white"
-                onClick={() => {
-                  const result = deleteTodo(todo.id);
-                  if (!result.ok) setMessage(result.reason ?? "삭제할 수 없어요.");
-                  else setMessage(null);
-                }}
-                disabled={record.isFinalized}
-              >
-                삭제
-              </Button>
-            </li>
-          ))}
-          {record.todos.length === 0 ? <li className="text-sm text-slate-500">오늘 할 일을 추가해 주세요.</li> : null}
-        </ul>
       </Card>
 
       <Card>

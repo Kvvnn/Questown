@@ -1,12 +1,32 @@
 "use client";
 
 import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
 import { addDays, addMonths, ensureDailyRecord, toDateKey, toMonthKey } from "@/domain/date";
-import { AppBackupData, DailyRecord, TabType } from "@/domain/types";
+import { getQuestCounts } from "@/domain/quest";
+import { AppBackupData, DailyRecord, QuestItem, QuestType, TabType } from "@/domain/types";
 
-const MAX_TODO_LENGTH = 80;
+const MAX_QUEST_TITLE_LENGTH = 80;
+
+interface LegacyTodoLike {
+  id?: string;
+  text?: string;
+  title?: string;
+  type?: string;
+  completed?: boolean;
+  createdAt?: string;
+  completedAt?: string;
+  isRecurring?: boolean;
+  recurrenceKey?: string;
+}
+
+interface LegacyRecordLike {
+  date?: string;
+  quests?: LegacyTodoLike[];
+  todos?: LegacyTodoLike[];
+  isFinalized?: boolean;
+}
 
 interface QuestownState {
   currentTab: TabType;
@@ -18,9 +38,9 @@ interface QuestownState {
 
   setTab: (tab: TabType) => void;
   setDailyGoal: (goal: number) => void;
-  addTodo: (text: string) => { ok: boolean; reason?: string };
-  toggleTodo: (todoId: string) => { ok: boolean; reason?: string };
-  deleteTodo: (todoId: string) => { ok: boolean; reason?: string };
+  addQuest: (title: string, type: QuestType) => { ok: boolean; reason?: string };
+  toggleQuest: (questId: string) => { ok: boolean; reason?: string };
+  deleteQuest: (questId: string) => { ok: boolean; reason?: string };
   finalizeCurrentDay: () => void;
   unfinalizeCurrentDay: () => void;
   goNextDayForDev: () => void;
@@ -32,10 +52,29 @@ interface QuestownState {
   importBackup: (data: AppBackupData) => { ok: boolean; reason?: string };
 }
 
+const isQuestType = (value: unknown): value is QuestType => value === "daily" || value === "main" || value === "sub";
+
+const normalizeQuest = (raw: LegacyTodoLike): QuestItem | null => {
+  const title = (raw.title ?? raw.text ?? "").trim();
+  if (!title) return null;
+
+  return {
+    id: raw.id ?? crypto.randomUUID(),
+    title,
+    type: isQuestType(raw.type) ? raw.type : "daily",
+    completed: Boolean(raw.completed),
+    createdAt: raw.createdAt ?? new Date().toISOString(),
+    completedAt: raw.completed ? raw.completedAt ?? new Date().toISOString() : undefined,
+    isRecurring: raw.isRecurring,
+    recurrenceKey: raw.recurrenceKey
+  };
+};
+
 const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
-  const completedCount = record.todos.filter((t) => t.completed).length;
-  const totalCount = record.todos.length;
+  const completedCount = record.quests.filter((quest) => quest.completed).length;
+  const totalCount = record.quests.length;
   const completionRate = getCompletionRate(completedCount, totalCount);
+  const counts = getQuestCounts(record.quests);
 
   return {
     ...record,
@@ -43,8 +82,28 @@ const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecor
     totalCount,
     completionRate,
     roofType: finalized ? getRoofType(completionRate) : "none",
-    isFinalized: finalized
+    isFinalized: finalized,
+    completedByType: counts.completedByType,
+    totalByType: counts.totalByType
   };
+};
+
+const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord => {
+  const base = ensureDailyRecord(dateKey);
+  if (!raw) return base;
+
+  const source = Array.isArray(raw.quests) ? raw.quests : Array.isArray(raw.todos) ? raw.todos : [];
+  const quests = source.map(normalizeQuest).filter((quest): quest is QuestItem => Boolean(quest));
+
+  return recalc(
+    {
+      ...base,
+      date: raw.date ?? dateKey,
+      quests,
+      isFinalized: Boolean(raw.isFinalized)
+    },
+    Boolean(raw.isFinalized)
+  );
 };
 
 const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) => {
@@ -61,77 +120,112 @@ export const useQuestownStore = create<QuestownState>()(
       recordsByDate: {},
 
       setTab: (tab) => set({ currentTab: tab }),
+
       setDailyGoal: (goal) => {
         const nextGoal = Math.min(10, Math.max(1, Math.round(goal || 1)));
         set({ dailyGoal: nextGoal });
       },
 
-      addTodo: (text) => {
-        const trimmed = text.trim();
-        if (!trimmed) return { ok: false, reason: "할 일을 입력해 주세요." };
-        if (trimmed.length > MAX_TODO_LENGTH) return { ok: false, reason: `할 일은 ${MAX_TODO_LENGTH}자 이하로 입력해 주세요.` };
+      addQuest: (title, type) => {
+        const trimmed = title.trim();
+        if (!trimmed) return { ok: false, reason: "퀘스트를 입력해 주세요." };
+        if (!isQuestType(type)) return { ok: false, reason: "올바른 퀘스트 타입이 아니에요." };
+        if (trimmed.length > MAX_QUEST_TITLE_LENGTH) {
+          return { ok: false, reason: `퀘스트는 ${MAX_QUEST_TITLE_LENGTH}자 이하로 입력해 주세요.` };
+        }
 
         const dateKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "이미 마감된 날짜는 수정할 수 없어요." };
-        if (today.todos.some((t) => t.text === trimmed)) return { ok: false, reason: "같은 할 일이 이미 있어요." };
 
-        const next = recalc({
-          ...today,
-          todos: [
-            ...today.todos,
-            {
-              id: crypto.randomUUID(),
-              text: trimmed,
-              completed: false,
-              createdAt: new Date().toISOString()
-            }
-          ],
-          isFinalized: false,
-          roofType: "none"
-        });
+        if (today.quests.some((quest) => quest.type === type && quest.title === trimmed)) {
+          return { ok: false, reason: "같은 타입에 동일한 퀘스트가 이미 있어요." };
+        }
 
-        set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
+        const next = recalc(
+          {
+            ...today,
+            quests: [
+              ...today.quests,
+              {
+                id: crypto.randomUUID(),
+                title: trimmed,
+                type,
+                completed: false,
+                createdAt: new Date().toISOString()
+              }
+            ],
+            isFinalized: false,
+            roofType: "none"
+          },
+          false
+        );
+
+        set((state) => ({
+          recordsByDate: {
+            ...state.recordsByDate,
+            [dateKey]: next
+          }
+        }));
+
         return { ok: true };
       },
 
-      toggleTodo: (todoId) => {
+      toggleQuest: (questId) => {
         const dateKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 체크 변경이 불가해요." };
 
-        const next = recalc({
-          ...today,
-          todos: today.todos.map((todo) =>
-            todo.id === todoId
-              ? {
-                  ...todo,
-                  completed: !todo.completed,
-                  completedAt: !todo.completed ? new Date().toISOString() : undefined
-                }
-              : todo
-          ),
-          isFinalized: false,
-          roofType: "none"
-        });
+        const next = recalc(
+          {
+            ...today,
+            quests: today.quests.map((quest) =>
+              quest.id === questId
+                ? {
+                    ...quest,
+                    completed: !quest.completed,
+                    completedAt: !quest.completed ? new Date().toISOString() : undefined
+                  }
+                : quest
+            ),
+            isFinalized: false,
+            roofType: "none"
+          },
+          false
+        );
 
-        set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
+        set((state) => ({
+          recordsByDate: {
+            ...state.recordsByDate,
+            [dateKey]: next
+          }
+        }));
+
         return { ok: true };
       },
 
-      deleteTodo: (todoId) => {
+      deleteQuest: (questId) => {
         const dateKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 삭제할 수 없어요." };
 
-        const next = recalc({
-          ...today,
-          todos: today.todos.filter((todo) => todo.id !== todoId),
-          isFinalized: false,
-          roofType: "none"
-        });
+        const next = recalc(
+          {
+            ...today,
+            quests: today.quests.filter((quest) => quest.id !== questId),
+            isFinalized: false,
+            roofType: "none"
+          },
+          false
+        );
 
-        set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
+        set((state) => ({
+          recordsByDate: {
+            ...state.recordsByDate,
+            [dateKey]: next
+          }
+        }));
+
         return { ok: true };
       },
 
@@ -202,7 +296,7 @@ export const useQuestownStore = create<QuestownState>()(
       },
 
       exportBackup: () => ({
-        version: 1,
+        version: 2,
         exportedAt: new Date().toISOString(),
         state: {
           currentDateKey: get().currentDateKey,
@@ -216,11 +310,19 @@ export const useQuestownStore = create<QuestownState>()(
         if (!data?.state?.recordsByDate) return { ok: false, reason: "백업 데이터 형식이 올바르지 않아요." };
 
         const nextDate = data.state.currentDateKey || toDateKey();
+        const normalizedRecords = Object.entries(data.state.recordsByDate).reduce<Record<string, DailyRecord>>(
+          (acc, [key, value]) => {
+            acc[key] = normalizeRecord(key, value as LegacyRecordLike);
+            return acc;
+          },
+          {}
+        );
+
         set({
           currentDateKey: nextDate,
           selectedMonth: data.state.selectedMonth || toMonthKey(new Date(`${nextDate}T00:00:00+09:00`)),
           dailyGoal: data.state.dailyGoal || 3,
-          recordsByDate: data.state.recordsByDate
+          recordsByDate: normalizedRecords
         });
 
         return { ok: true };
@@ -228,16 +330,27 @@ export const useQuestownStore = create<QuestownState>()(
     }),
     {
       name: "questown-mvp-storage",
-      version: 3,
+      version: 4,
       storage: createJSONStorage(() => localStorage),
       migrate: (persistedState: unknown) => {
-        const state = (persistedState ?? {}) as Partial<QuestownState>;
+        const state = (persistedState ?? {}) as Partial<QuestownState> & {
+          recordsByDate?: Record<string, LegacyRecordLike>;
+        };
+
+        const recordsByDate = Object.entries(state.recordsByDate ?? {}).reduce<Record<string, DailyRecord>>(
+          (acc, [key, value]) => {
+            acc[key] = normalizeRecord(key, value);
+            return acc;
+          },
+          {}
+        );
+
         return {
           currentTab: state.currentTab ?? "today",
           currentDateKey: state.currentDateKey ?? toDateKey(),
           selectedMonth: state.selectedMonth ?? toMonthKey(),
           dailyGoal: state.dailyGoal ?? 3,
-          recordsByDate: state.recordsByDate ?? {},
+          recordsByDate,
           selectedDateInTown: state.selectedDateInTown
         } as QuestownState;
       }

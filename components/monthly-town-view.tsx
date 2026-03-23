@@ -6,9 +6,11 @@ import { motion, useReducedMotion } from "framer-motion";
 import { Button, Card } from "@/components/ui";
 import { getBuildingHeight } from "@/domain/building";
 import { getDaysInMonth } from "@/domain/date";
+import { getFloorVisualStyle } from "@/domain/floor-style";
+import { getDominantQuestType, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
 import { createTownLayout, TownLayout, TownPlot } from "@/domain/town-map";
 import { moveDateInMonth, TownDirection } from "@/domain/town-navigation";
-import { DailyRecord } from "@/domain/types";
+import { DailyRecord, QuestType } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
 
 const roofColor = {
@@ -50,6 +52,21 @@ const getCameraTarget = (plot: TownPlot | undefined, layout: TownLayout, reduced
   };
 };
 
+const getTypeChipStyle = (type: QuestType | null) => {
+  if (!type) {
+    return {
+      icon: "•",
+      badgeClass: "bg-slate-100 text-slate-500"
+    };
+  }
+
+  const visual = getFloorVisualStyle(type);
+  return {
+    icon: visual.icon,
+    badgeClass: visual.badgeClass
+  };
+};
+
 interface TownLotProps {
   plot: TownPlot;
   layout: TownLayout;
@@ -63,6 +80,8 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
   const height = getBuildingHeight(record?.completedCount ?? 0);
   const floors = Math.min(height, 7);
   const roofType = record?.isFinalized ? record.roofType : "none";
+  const dominantType = getDominantQuestType(record, "completed") ?? getDominantQuestType(record, "total");
+  const typeChip = getTypeChipStyle(dominantType);
 
   const buildingPalette =
     height >= 8
@@ -83,7 +102,7 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
         left: layout.padding + plot.col * layout.slot,
         top: layout.padding + plot.row * layout.slot,
         width: layout.tile,
-        height: layout.tile + 16
+        height: layout.tile + 18
       }}
     >
       <motion.div
@@ -109,7 +128,11 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
           />
         ) : null}
 
-        {roofType === "high" ? <span className="absolute left-[4px] top-[4px] text-[10px]">✨</span> : null}
+        <span
+          className={`absolute -right-1 -top-1 inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] ${typeChip.badgeClass}`}
+        >
+          {typeChip.icon}
+        </span>
       </motion.div>
 
       <div className="mt-1 flex items-center justify-between px-0.5 text-[10px] font-bold text-slate-600">
@@ -121,19 +144,21 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
 });
 
 export function MonthlyTownView() {
-  const selectedMonth = useQuestownStore((s) => s.selectedMonth);
-  const currentDateKey = useQuestownStore((s) => s.currentDateKey);
-  const recordsByDate = useQuestownStore((s) => s.recordsByDate);
-  const selectedDateInTown = useQuestownStore((s) => s.selectedDateInTown);
-  const moveMonth = useQuestownStore((s) => s.moveMonth);
-  const selectDateInTown = useQuestownStore((s) => s.selectDateInTown);
+  const selectedMonth = useQuestownStore((state) => state.selectedMonth);
+  const currentDateKey = useQuestownStore((state) => state.currentDateKey);
+  const recordsByDate = useQuestownStore((state) => state.recordsByDate);
+  const selectedDateInTown = useQuestownStore((state) => state.selectedDateInTown);
+  const moveMonth = useQuestownStore((state) => state.moveMonth);
+  const selectDateInTown = useQuestownStore((state) => state.selectDateInTown);
 
   const dayCount = getDaysInMonth(selectedMonth);
   const layout = useMemo(() => createTownLayout(selectedMonth, dayCount), [selectedMonth, dayCount]);
 
   useEffect(() => {
     const validSelection =
-      selectedDateInTown && selectedDateInTown.startsWith(selectedMonth) && layout.plots.some((plot) => plot.date === selectedDateInTown);
+      selectedDateInTown &&
+      selectedDateInTown.startsWith(selectedMonth) &&
+      layout.plots.some((plot) => plot.date === selectedDateInTown);
 
     if (validSelection) return;
 
@@ -218,7 +243,7 @@ export function MonthlyTownView() {
         </div>
 
         <p id="town-map-help" className="mb-2 text-xs text-slate-500">
-          키보드로도 이동할 수 있어요: ← → ↑ ↓, Home, End
+          키보드 이동: ← → ↑ ↓, Home, End · 각 타일 우측 상단 아이콘은 그날 주된 퀘스트 타입입니다.
         </p>
 
         <div
@@ -334,10 +359,10 @@ export function MonthlyTownView() {
         ) : !selectedRecord ? (
           <div className="space-y-1 text-sm text-slate-600">
             <p>날짜: {selectedDateInTown}</p>
-            <p>아직 기록이 없어요. 오늘 Todo를 완료해서 건물을 세워보세요.</p>
+            <p>아직 기록이 없어요. 오늘 Quest를 완료해서 건물을 세워보세요.</p>
           </div>
         ) : (
-          <div className="space-y-2 text-sm">
+          <div className="space-y-3 text-sm">
             <p>날짜: {selectedRecord.date}</p>
             <p>
               완료: {selectedRecord.completedCount}/{selectedRecord.totalCount} (
@@ -345,10 +370,22 @@ export function MonthlyTownView() {
             </p>
             <p>지붕: {selectedRecord.roofType}</p>
             <p>상태: {selectedRecord.isFinalized ? "마감됨" : "진행 중"}</p>
+
+            <div className="grid grid-cols-3 gap-2">
+              {questTypeOrder.map((type) => {
+                const visual = getFloorVisualStyle(type);
+                return (
+                  <div key={type} className={`rounded-xl px-2 py-2 text-center text-xs font-bold ${visual.badgeClass}`}>
+                    {questTypeShortLabel[type]} {selectedRecord.completedByType[type]}/{selectedRecord.totalByType[type]}
+                  </div>
+                );
+              })}
+            </div>
+
             <ul className="list-disc space-y-1 pl-4">
-              {selectedRecord.todos.map((todo) => (
-                <li key={todo.id}>
-                  {todo.completed ? "✅" : "⬜"} {todo.text}
+              {selectedRecord.quests.map((quest) => (
+                <li key={quest.id}>
+                  {quest.completed ? "✅" : "⬜"} [{questTypeShortLabel[quest.type]}] {quest.title}
                 </li>
               ))}
             </ul>
