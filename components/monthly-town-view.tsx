@@ -26,11 +26,11 @@ export function MonthlyTownView() {
     <div className="space-y-4">
       <Card>
         <div className="mb-3 flex items-center justify-between">
-          <Button className="bg-slate-200" onClick={() => moveMonth(-1)}>
+          <Button className="min-h-11 bg-slate-200" onClick={() => moveMonth(-1)} aria-label="이전 달 보기">
             이전 달
           </Button>
           <h2 className="text-lg font-bold">{selectedMonth} Town</h2>
-          <Button className="bg-slate-200" onClick={() => moveMonth(1)}>
+          <Button className="min-h-11 bg-slate-200" onClick={() => moveMonth(1)} aria-label="다음 달 보기">
             다음 달
           </Button>
         </div>
@@ -45,9 +45,13 @@ export function MonthlyTownView() {
               <button
                 key={date}
                 onClick={() => selectDateInTown(date)}
-                className="rounded-2xl border-2 border-slate-100 bg-white p-2 text-left"
+                aria-label={`${date} 상세 보기, ${h}층, 지붕 ${record?.roofType ?? "none"}`}
+                className="min-h-16 rounded-2xl border-2 border-slate-100 bg-white p-2 text-left"
               >
-                <div className="text-xs font-semibold">{day}일</div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold">{day}일</div>
+                  <div className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-blue-700">{h}F</div>
+                </div>
                 <div className="mt-2 flex h-10 items-end gap-[2px]">
                   {Array.from({ length: Math.min(h, 6) }).map((_, idx) => (
                     <div key={idx} className="h-2 w-2 rounded-sm bg-blue-400" />

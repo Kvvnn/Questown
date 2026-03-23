@@ -34,7 +34,7 @@ export function TodayView() {
   return (
     <div className="space-y-4">
       <Card>
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between gap-2">
           <h2 className="text-xl font-bold">Today · {record.date}</h2>
           <span className="rounded-full bg-quest-grass px-3 py-1 text-sm font-semibold">{feedback}</span>
         </div>
@@ -48,11 +48,14 @@ export function TodayView() {
           <div className="rounded-2xl bg-slate-100 p-2">전체 {record.totalCount}</div>
           <div className="rounded-2xl bg-slate-100 p-2">완료율 {percent}%</div>
         </div>
+        <div className="mt-2 text-center text-xs font-semibold text-slate-600">
+          지붕 상태: {record.isFinalized ? record.roofType.toUpperCase() : "마감 전 (NONE)"}
+        </div>
         <div className="mt-3 flex gap-2">
-          <Button className="flex-1 bg-quest-primary text-white" onClick={finalizeCurrentDay}>
+          <Button className="min-h-11 flex-1 bg-quest-primary text-white" onClick={finalizeCurrentDay}>
             오늘 마감
           </Button>
-          <Button className="flex-1 bg-quest-accent text-slate-900" onClick={goNextDayForDev}>
+          <Button className="min-h-11 flex-1 bg-quest-accent text-slate-900" onClick={goNextDayForDev}>
             다음 날로 넘기기
           </Button>
         </div>
@@ -61,12 +64,13 @@ export function TodayView() {
       <Card>
         <form onSubmit={onSubmit} className="mb-3 flex gap-2">
           <input
+            aria-label="새 할 일 입력"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="할 일을 입력하세요"
-            className="flex-1 rounded-2xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-quest-primary"
+            className="min-h-11 flex-1 rounded-2xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-quest-primary"
           />
-          <Button type="submit" className="bg-quest-primary text-white">
+          <Button type="submit" className="min-h-11 bg-quest-primary text-white">
             추가
           </Button>
         </form>
@@ -75,13 +79,18 @@ export function TodayView() {
           {record.todos.map((todo) => (
             <li key={todo.id} className="flex items-center gap-2 rounded-2xl bg-slate-50 p-2">
               <input
+                aria-label={`${todo.text} 완료 여부`}
                 type="checkbox"
                 checked={todo.completed}
                 onChange={() => toggleTodo(todo.id)}
-                className="h-5 w-5"
+                className="h-6 w-6"
               />
               <span className={`flex-1 ${todo.completed ? "text-slate-400 line-through" : ""}`}>{todo.text}</span>
-              <Button className="bg-quest-danger px-2 py-1 text-white" onClick={() => deleteTodo(todo.id)}>
+              <Button
+                aria-label={`${todo.text} 삭제`}
+                className="min-h-11 bg-quest-danger px-3 py-2 text-white"
+                onClick={() => deleteTodo(todo.id)}
+              >
                 삭제
               </Button>
             </li>

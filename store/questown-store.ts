@@ -74,7 +74,7 @@ export const useQuestownStore = create<QuestownState>()(
         }));
       },
       toggleTodo: (todoId) => {
-        const dateKey = toDateKey();
+        const dateKey = get().currentDateKey;
         const today = getTodayRecord(get().recordsByDate, dateKey);
         const next = recalc({
           ...today,
@@ -94,7 +94,7 @@ export const useQuestownStore = create<QuestownState>()(
         set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
       },
       deleteTodo: (todoId) => {
-        const dateKey = toDateKey();
+        const dateKey = get().currentDateKey;
         const today = getTodayRecord(get().recordsByDate, dateKey);
         const next = recalc({
           ...today,
@@ -112,7 +112,7 @@ export const useQuestownStore = create<QuestownState>()(
         set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
       },
       goNextDayForDev: () => {
-        const todayKey = toDateKey();
+        const todayKey = get().currentDateKey;
         const today = getTodayRecord(get().recordsByDate, todayKey);
         const finalized = recalc(today, true);
 
@@ -146,7 +146,29 @@ export const useQuestownStore = create<QuestownState>()(
     }),
     {
       name: "questown-mvp-storage",
-      storage: createJSONStorage(() => localStorage)
+      version: 2,
+      storage: createJSONStorage(() => localStorage),
+      migrate: (persistedState: unknown, version) => {
+        const state = (persistedState ?? {}) as Partial<QuestownState>;
+
+        if (version < 2) {
+          return {
+            currentTab: state.currentTab ?? "today",
+            currentDateKey: state.currentDateKey ?? toDateKey(),
+            selectedMonth: state.selectedMonth ?? toMonthKey(),
+            recordsByDate: state.recordsByDate ?? {},
+            selectedDateInTown: state.selectedDateInTown
+          };
+        }
+
+        return {
+          currentTab: state.currentTab ?? "today",
+          currentDateKey: state.currentDateKey ?? toDateKey(),
+          selectedMonth: state.selectedMonth ?? toMonthKey(),
+          recordsByDate: state.recordsByDate ?? {},
+          selectedDateInTown: state.selectedDateInTown
+        };
+      }
     }
   )
 );
