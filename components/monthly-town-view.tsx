@@ -346,25 +346,50 @@ export function MonthlyTownView() {
         </div>
 
         <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p id="town-map-help" className="text-xs text-slate-500">
-            캘린더 배치 기반 타운입니다. 방향키로 날짜를 이동하고, 탐색 버튼으로 화면 중심을 조정할 수 있어요.
-          </p>
-          <div className="flex flex-wrap items-center justify-end gap-1">
-            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(-26, 0)} aria-label="맵 왼쪽">
+          <div className="space-y-2">
+            <p id="town-map-help" className="text-xs text-slate-500">
+              캘린더 배치 기반 타운입니다. 방향키로 날짜를 이동하고, 패드 버튼으로 화면 중심을 미세 조정할 수 있어요.
+            </p>
+            {activeSelectedDate ? (
+              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+                <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1">선택 날짜 {activeSelectedDate}</span>
+                {activeSelectedDate === currentDateKey ? (
+                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">오늘</span>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+          <div
+            role="group"
+            aria-label="맵 화면 조정"
+            className="self-start rounded-2xl border border-white/70 bg-white/70 p-2 shadow-sm sm:self-auto"
+          >
+            <div className="grid grid-cols-3 gap-1">
+              <span className="h-9 w-9" aria-hidden="true" />
+              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(0, -20)} aria-label="맵 위쪽">
+                ▲
+              </Button>
+              <span className="h-9 w-9" aria-hidden="true" />
+              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(-26, 0)} aria-label="맵 왼쪽">
               ◀
-            </Button>
-            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(26, 0)} aria-label="맵 오른쪽">
+              </Button>
+              <Button
+                type="button"
+                className="h-9 min-h-0 bg-white px-2 py-0 text-[10px]"
+                onClick={() => setCameraNudge({ x: 0, y: 0 })}
+                aria-label="맵 중앙으로 재설정"
+              >
+                중앙
+              </Button>
+              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(26, 0)} aria-label="맵 오른쪽">
               ▶
-            </Button>
-            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(0, -20)} aria-label="맵 위쪽">
-              ▲
-            </Button>
-            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(0, 20)} aria-label="맵 아래쪽">
+              </Button>
+              <span className="h-9 w-9" aria-hidden="true" />
+              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(0, 20)} aria-label="맵 아래쪽">
               ▼
-            </Button>
-            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => setCameraNudge({ x: 0, y: 0 })}>
-              중앙
-            </Button>
+              </Button>
+              <span className="h-9 w-9" aria-hidden="true" />
+            </div>
           </div>
         </div>
 

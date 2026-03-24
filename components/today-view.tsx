@@ -54,6 +54,7 @@ const priorityButtonClass: Record<QuestPriority, string> = {
 };
 
 type InlineStatusTone = "info" | "success" | "error";
+type InlineStatusMessage = { text: string; tone: InlineStatusTone };
 
 const inlineStatusClass: Record<InlineStatusTone, string> = {
   info: "border-sky-200 bg-sky-50 text-sky-700",
@@ -98,7 +99,8 @@ export function TodayView() {
   const [carryOverEnabled, setCarryOverEnabled] = useState(true);
   const [isCarryOverAutoSelected, setIsCarryOverAutoSelected] = useState(true);
   const [carryOverLimit, setCarryOverLimit] = useState(3);
-  const [message, setMessage] = useState<{ text: string; tone: InlineStatusTone } | null>(null);
+  const [composerMessage, setComposerMessage] = useState<InlineStatusMessage | null>(null);
+  const [globalMessage, setGlobalMessage] = useState<InlineStatusMessage | null>(null);
   const [toasts, setToasts] = useState<RewardToastItem[]>([]);
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
 
@@ -130,12 +132,15 @@ export function TodayView() {
   const reduceMotion = !!useReducedMotion();
   const showDevTools = process.env.NODE_ENV !== "production";
 
-  const showMessage = useCallback((text: string, tone: InlineStatusTone = "info") => {
-    setMessage({ text, tone });
+  const showComposerMessage = useCallback((text: string, tone: InlineStatusTone = "info") => {
+    setComposerMessage({ text, tone });
+  }, []);
+  const showGlobalMessage = useCallback((text: string, tone: InlineStatusTone = "info") => {
+    setGlobalMessage({ text, tone });
   }, []);
   const clearComposerFeedback = () => {
     setHasTriedEmptySubmit(false);
-    setMessage(null);
+    setComposerMessage(null);
   };
 
   const percent = Math.round(record.completionRate * 100);
@@ -192,6 +197,7 @@ export function TodayView() {
     () => record.quests.filter((quest) => !quest.completed && quest.title.trim().length > 0),
     [record.quests]
   );
+  const hasDependencyCandidates = dependencyCandidates.length > 0;
 
   const weeklyMainProgress = useMemo(
     () => getWeeklyMainProgress(recordsByDate, currentDateKey),
@@ -368,7 +374,7 @@ export function TodayView() {
 
     if (!trimmedTitle) {
       setHasTriedEmptySubmit(true);
-      showMessage("퀘스트를 입력해 주세요.", "error");
+      showComposerMessage("퀘스트를 입력해 주세요.", "error");
       titleInputRef.current?.focus();
       return;
     }
@@ -385,7 +391,7 @@ export function TodayView() {
     });
 
     if (!result.ok) {
-      showMessage(result.reason ?? "추가에 실패했어요.", "error");
+      showComposerMessage(result.reason ?? "추가에 실패했어요.", "error");
       titleInputRef.current?.focus();
       if (trimmedTitle) {
         titleInputRef.current?.select();
@@ -396,7 +402,7 @@ export function TodayView() {
     setTitleInput("");
     setHasTriedEmptySubmit(false);
     setSelectedDependencyQuestId("");
-    setMessage(null);
+    setComposerMessage(null);
     titleInputRef.current?.focus();
   };
 
@@ -454,7 +460,7 @@ export function TodayView() {
       anchor.remove();
       URL.revokeObjectURL(url);
     }, 0);
-    showMessage("백업 파일을 저장했어요.", "success");
+    showGlobalMessage("백업 파일을 저장했어요.", "success");
   };
 
   const onBackupImport = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -468,7 +474,7 @@ export function TodayView() {
       try {
         parsed = JSON.parse(text) as AppBackupData;
       } catch {
-        showMessage("JSON 형식이 올바르지 않아요.", "error");
+        showGlobalMessage("JSON 형식이 올바르지 않아요.", "error");
         return;
       }
 
@@ -485,9 +491,9 @@ export function TodayView() {
         previousRef.current = createRewardSnapshot(nextRecord, nextStreak);
       }
 
-      showMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.", result.ok ? "success" : "error");
+      showGlobalMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.", result.ok ? "success" : "error");
     } catch {
-      showMessage("백업 파일을 읽지 못했어요.", "error");
+      showGlobalMessage("백업 파일을 읽지 못했어요.", "error");
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -535,11 +541,11 @@ export function TodayView() {
               const wasCompleted = quest.completed;
               const result = toggleQuest(quest.id);
               if (!result.ok) {
-                showMessage(result.reason ?? "수정할 수 없어요.", "error");
+                showGlobalMessage(result.reason ?? "수정할 수 없어요.", "error");
                 return;
               }
 
-              setMessage(null);
+              setGlobalMessage(null);
               if (!wasCompleted) scrollToBuilding();
             }}
             className="mt-1 h-5 w-5 shrink-0"
@@ -641,8 +647,8 @@ export function TodayView() {
                     disabled={record.isFinalized}
                     onClick={() => {
                       const result = updateQuestMeta(quest.id, { priority: nextPriority[priority] });
-                      if (!result.ok) showMessage(result.reason ?? "우선순위를 변경할 수 없어요.", "error");
-                      else setMessage(null);
+                      if (!result.ok) showGlobalMessage(result.reason ?? "우선순위를 변경할 수 없어요.", "error");
+                      else setGlobalMessage(null);
                     }}
                   >
                     우선순위 변경
@@ -654,8 +660,8 @@ export function TodayView() {
                     disabled={record.isFinalized}
                     onClick={() => {
                       const result = updateQuestMeta(quest.id, { focusPinned: !quest.focusPinned });
-                      if (!result.ok) showMessage(result.reason ?? "집중 고정을 변경할 수 없어요.", "error");
-                      else setMessage(null);
+                      if (!result.ok) showGlobalMessage(result.reason ?? "집중 고정을 변경할 수 없어요.", "error");
+                      else setGlobalMessage(null);
                     }}
                   >
                     {quest.focusPinned ? "집중 해제" : "집중 고정"}
@@ -671,8 +677,8 @@ export function TodayView() {
                       if (!confirmed) return;
 
                       const result = deleteQuest(quest.id);
-                      if (!result.ok) showMessage(result.reason ?? "삭제할 수 없어요.", "error");
-                      else setMessage(null);
+                      if (!result.ok) showGlobalMessage(result.reason ?? "삭제할 수 없어요.", "error");
+                      else setGlobalMessage(null);
                     }}
                   >
                     삭제
@@ -726,7 +732,7 @@ export function TodayView() {
     <div className="space-y-4" id="today-panel-content">
       <RewardToasts toasts={toasts} />
 
-      <div className="sticky top-2 z-20">
+      <div className="sticky top-2 z-20 space-y-2">
         <Card className="relative overflow-hidden p-3" aria-label="오늘 요약 HUD">
           <div className="pointer-events-none absolute -right-10 -top-12 h-24 w-24 rounded-full bg-indigo-200/40 blur-2xl" />
 
@@ -754,6 +760,16 @@ export function TodayView() {
             />
           </div>
         </Card>
+
+        {globalMessage ? (
+          <p
+            role={globalMessage.tone === "error" ? "alert" : "status"}
+            aria-live={globalMessage.tone === "error" ? "assertive" : "polite"}
+            className={`rounded-2xl border px-3 py-2 text-sm font-semibold shadow-sm ${inlineStatusClass[globalMessage.tone]}`}
+          >
+            {globalMessage.text}
+          </p>
+        ) : null}
       </div>
 
       <div ref={buildingPanelRef}>
@@ -858,7 +874,7 @@ export function TodayView() {
                 onChange={(e) => {
                   const nextTitle = e.target.value;
                   setTitleInput(nextTitle);
-                  if (hasTriedEmptySubmit || message) {
+                  if (hasTriedEmptySubmit || composerMessage) {
                     clearComposerFeedback();
                   }
                 }}
@@ -941,11 +957,14 @@ export function TodayView() {
                   <label className="mb-1 block text-xs font-semibold text-slate-600">선행 퀘스트 (선택)</label>
                   <select
                     value={selectedDependencyQuestId}
+                    disabled={!hasDependencyCandidates}
                     onChange={(e) => {
                       clearComposerFeedback();
                       setSelectedDependencyQuestId(e.target.value);
                     }}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+                    className={`w-full rounded-xl border px-3 py-2 text-sm ${
+                      hasDependencyCandidates ? "border-slate-200 bg-white" : "border-slate-200 bg-slate-100 text-slate-400"
+                    }`}
                     aria-label="선행 퀘스트 선택"
                   >
                     <option value="">없음</option>
@@ -955,6 +974,11 @@ export function TodayView() {
                       </option>
                     ))}
                   </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {hasDependencyCandidates
+                      ? "먼저 끝내야 하는 기존 미완료 퀘스트가 있으면 연결해 주세요."
+                      : "연결할 미완료 퀘스트가 아직 없어요. 먼저 다른 퀘스트를 추가하면 선행 조건을 설정할 수 있어요."}
+                  </p>
                 </div>
 
                 <div>
@@ -1027,13 +1051,13 @@ export function TodayView() {
           </p>
         ) : null}
 
-        {message ? (
+        {composerMessage ? (
           <p
-            role={message.tone === "error" ? "alert" : "status"}
-            aria-live={message.tone === "error" ? "assertive" : "polite"}
-            className={`mt-3 rounded-xl border px-3 py-2 text-sm font-semibold ${inlineStatusClass[message.tone]}`}
+            role={composerMessage.tone === "error" ? "alert" : "status"}
+            aria-live={composerMessage.tone === "error" ? "assertive" : "polite"}
+            className={`mt-3 rounded-xl border px-3 py-2 text-sm font-semibold ${inlineStatusClass[composerMessage.tone]}`}
           >
-            {message.text}
+            {composerMessage.text}
           </p>
         ) : null}
       </Card>
