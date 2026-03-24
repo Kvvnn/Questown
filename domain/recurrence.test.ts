@@ -8,6 +8,22 @@ import {
 } from "./recurrence";
 import { QuestItem } from "./types";
 
+const withTimeZone = (timeZone: string, run: () => void) => {
+  const previous = process.env.TZ;
+  process.env.TZ = timeZone;
+
+  try {
+    run();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.TZ;
+      return;
+    }
+
+    process.env.TZ = previous;
+  }
+};
+
 const baseQuest: QuestItem = {
   id: "q1",
   title: "운동",
@@ -30,6 +46,19 @@ describe("recurrence utils", () => {
 
     const weekly: QuestItem = { ...baseQuest, recurrencePattern: "weekly" };
     expect(isRecurringDueOnDate(weekly, "2026-03-31")).toBe(true);
+  });
+
+  it("keeps weekday recurrence aligned to Seoul calendar days", () => {
+    const weekdays: QuestItem = {
+      ...baseQuest,
+      recurrencePattern: "weekdays",
+      recurrenceAnchorDate: "2026-03-01"
+    };
+
+    withTimeZone("America/Los_Angeles", () => {
+      expect(isRecurringDueOnDate(weekdays, "2026-03-02")).toBe(true);
+      expect(isRecurringDueOnDate(weekdays, "2026-03-08")).toBe(false);
+    });
   });
 
   it("creates recurring and carry-over copies", () => {

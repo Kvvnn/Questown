@@ -9,7 +9,7 @@ const normalizeDateDiff = (fromDateKey: string, toDateKey: string) => {
   return Math.floor((to - from) / DAY_MS);
 };
 
-const getWeekday = (dateKey: string) => dateKeyToDate(dateKey).getDay();
+const getWeekday = (dateKey: string) => dateKeyToDate(dateKey).getUTCDay();
 
 export const normalizeRecurrencePattern = (
   pattern: RecurrencePattern | undefined,
