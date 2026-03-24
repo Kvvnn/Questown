@@ -99,7 +99,7 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
       onClick={() => onSelect(plot.date)}
       aria-label={`${plot.date} 건물 선택`}
       aria-pressed={selected}
-      className="absolute text-left outline-none focus-visible:z-10"
+      className="group absolute text-left outline-none focus-visible:z-10"
       style={{
         left: layout.padding + plot.col * layout.slot,
         top: layout.padding + plot.row * layout.slot,
@@ -107,10 +107,10 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
         height: layout.tile + 22
       }}
     >
-        <motion.div
-          animate={reducedMotion ? { y: 0, scale: 1 } : { y: selected ? -5 : 0, scale: selected ? 1.03 : 1 }}
-          transition={{ type: "spring", stiffness: 280, damping: 20 }}
-        className={`relative flex h-[74px] w-full items-end justify-center rounded-xl border border-white/70 bg-gradient-to-b from-slate-50 to-slate-100 p-1 shadow focus-within:ring-2 focus-within:ring-quest-primary focus-within:ring-offset-2 focus-within:ring-offset-sky-100 ${selected ? "ring-2 ring-quest-primary" : ""}`}
+      <motion.div
+        animate={reducedMotion ? { y: 0, scale: 1 } : { y: selected ? -5 : 0, scale: selected ? 1.03 : 1 }}
+        transition={{ type: "spring", stiffness: 280, damping: 20 }}
+        className={`relative flex h-[74px] w-full items-end justify-center rounded-xl border border-white/70 bg-gradient-to-b from-slate-50 to-slate-100 p-1 shadow group-focus-visible:ring-2 group-focus-visible:ring-quest-primary group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-sky-100 ${selected ? "ring-2 ring-quest-primary" : ""}`}
       >
         <div className="absolute bottom-1 h-2 w-[86%] rounded-full bg-slate-300/85" />
 

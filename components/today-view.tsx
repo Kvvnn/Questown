@@ -66,6 +66,7 @@ export function TodayView() {
   const record = useTodayRecord();
   const height = useTodayBuildingHeight();
   const [titleInput, setTitleInput] = useState("");
+  const [hasTriedEmptySubmit, setHasTriedEmptySubmit] = useState(false);
   const [selectedType, setSelectedType] = useState<QuestType>("main");
   const [selectedPriority, setSelectedPriority] = useState<QuestPriority>("p1");
   const [selectedDependencyQuestId, setSelectedDependencyQuestId] = useState<string>("");
@@ -104,6 +105,7 @@ export function TodayView() {
   const importBackup = useQuestownStore((state) => state.importBackup);
 
   const reduceMotion = !!useReducedMotion();
+  const showDevTools = process.env.NODE_ENV !== "production";
 
   const percent = Math.round(record.completionRate * 100);
   const streak = useMemo(
@@ -174,6 +176,7 @@ export function TodayView() {
   }, [dailyGoal, record.completedCount]);
 
   const isQuestTitleEmpty = titleInput.trim().length === 0;
+  const showQuestTitleError = hasTriedEmptySubmit && isQuestTitleEmpty;
 
   const clearEventQueue = useCallback(() => {
     eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
@@ -303,8 +306,17 @@ export function TodayView() {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    const trimmedTitle = titleInput.trim();
+
+    if (!trimmedTitle) {
+      setHasTriedEmptySubmit(true);
+      setMessage("퀘스트를 입력해 주세요.");
+      titleInputRef.current?.focus();
+      return;
+    }
+
     const result = addQuest({
-      title: titleInput,
+      title: trimmedTitle,
       type: selectedType,
       priority: selectedPriority,
       dependencyQuestIds: selectedDependencyQuestId ? [selectedDependencyQuestId] : undefined,
@@ -320,6 +332,7 @@ export function TodayView() {
     }
 
     setTitleInput("");
+    setHasTriedEmptySubmit(false);
     setSelectedDependencyQuestId("");
     setMessage(null);
     titleInputRef.current?.focus();
@@ -713,17 +726,33 @@ export function TodayView() {
             <input
               ref={titleInputRef}
               aria-label="새 퀘스트 입력"
-              aria-invalid={isQuestTitleEmpty}
+              aria-invalid={showQuestTitleError}
+              aria-describedby={showQuestTitleError ? "quest-input-hint quest-title-error" : "quest-input-hint"}
               value={titleInput}
               maxLength={80}
-              onChange={(e) => setTitleInput(e.target.value)}
+              onChange={(e) => {
+                const nextTitle = e.target.value;
+                setTitleInput(nextTitle);
+                if (hasTriedEmptySubmit && nextTitle.trim().length > 0) {
+                  setHasTriedEmptySubmit(false);
+                  setMessage(null);
+                }
+              }}
               placeholder="예: 오늘 편집본 완성"
-              className="min-h-11 flex-1 rounded-2xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-quest-primary"
+              className={`min-h-11 flex-1 rounded-2xl border-2 px-3 py-2 outline-none focus:border-quest-primary ${
+                showQuestTitleError ? "border-rose-300 bg-rose-50/70" : "border-slate-200"
+              }`}
             />
             <Button type="submit" className="min-h-11 bg-quest-primary text-white" disabled={isQuestTitleEmpty}>
               추가
             </Button>
           </div>
+
+          {showQuestTitleError ? (
+            <p id="quest-title-error" className="text-xs font-semibold text-rose-600">
+              퀘스트 제목을 입력해야 추가할 수 있어요.
+            </p>
+          ) : null}
 
           <div className="grid grid-cols-3 gap-2">
             {questTypeOrder.map((type) => {
@@ -937,7 +966,9 @@ export function TodayView() {
           <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
             <div>
               <h3 className="text-base font-bold">고급 설정 / 운영</h3>
-              <p className="text-xs text-slate-500">일일 목표, 타입별 보기, 백업, 개발용 도구를 여기로 모아뒀어요.</p>
+              <p className="text-xs text-slate-500">
+                {showDevTools ? "일일 목표, 타입별 보기, 백업, 개발용 도구를 여기로 모아뒀어요." : "일일 목표, 타입별 보기, 백업을 여기로 모아뒀어요."}
+              </p>
             </div>
             <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">열기</span>
           </summary>
@@ -1011,13 +1042,15 @@ export function TodayView() {
               />
             </div>
 
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-              <h4 className="text-sm font-bold text-amber-900">개발용 도구</h4>
-              <p className="mt-1 text-xs text-amber-800">일반 흐름에서는 숨겨 두고, 필요할 때만 날짜를 넘깁니다.</p>
-              <Button className="mt-3 min-h-11 bg-quest-accent text-slate-900" onClick={goNextDayForDev}>
-                다음 날로 넘기기 (DEV)
-              </Button>
-            </div>
+            {showDevTools ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                <h4 className="text-sm font-bold text-amber-900">개발용 도구</h4>
+                <p className="mt-1 text-xs text-amber-800">일반 흐름에서는 숨겨 두고, 필요할 때만 날짜를 넘깁니다.</p>
+                <Button className="mt-3 min-h-11 bg-quest-accent text-slate-900" onClick={goNextDayForDev}>
+                  다음 날로 넘기기 (DEV)
+                </Button>
+              </div>
+            ) : null}
           </div>
         </details>
       </Card>
