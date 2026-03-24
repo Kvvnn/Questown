@@ -28,13 +28,27 @@ export default function HomePage() {
   const rolloverToToday = useQuestownStore((s) => s.rolloverToToday);
 
   useEffect(() => {
+    const syncToday = () => {
+      rolloverToToday();
+    };
+
     hydrateToday();
 
-    const id = setInterval(() => {
-      rolloverToToday();
-    }, 60_000);
+    const id = window.setInterval(syncToday, 60_000);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        syncToday();
+      }
+    };
 
-    return () => clearInterval(id);
+    window.addEventListener("focus", syncToday);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("focus", syncToday);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [hydrateToday, rolloverToToday]);
 
   const focusTab = (nextTab: "today" | "town") => {

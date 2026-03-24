@@ -9,6 +9,7 @@ import { Button, Card } from "@/components/ui";
 import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
 import { getDisplayedRoofType, roofTypeLabel } from "@/domain/building";
 import {
+  getCompletedDependentIds,
   getExecutionQueue,
   getFocusQuestIds,
   getWeeklyMainProgress,
@@ -506,6 +507,15 @@ export function TodayView() {
     const rank = queueRankMap.get(quest.id);
     const typeVisual = getFloorVisualStyle(quest.type);
     const isBlocked = !quest.completed && blockedByIds.length > 0;
+    const rollbackBlockedDependentIds = quest.completed ? getCompletedDependentIds(quest.id, questMap) : [];
+    const rollbackBlockedTitles = rollbackBlockedDependentIds
+      .map((id) => questMap.get(id)?.title)
+      .filter((title): title is string => Boolean(title));
+    const rollbackBlockedPreview = rollbackBlockedTitles.slice(0, 2).join(", ");
+    const rollbackBlockedSuffix =
+      rollbackBlockedTitles.length > 2 ? ` 외 ${rollbackBlockedTitles.length - 2}개` : "";
+    const isRollbackBlocked = quest.completed && rollbackBlockedDependentIds.length > 0;
+    const isToggleDisabled = record.isFinalized || isBlocked || isRollbackBlocked;
 
     return (
       <li
@@ -517,7 +527,7 @@ export function TodayView() {
             aria-label={`${quest.title} 완료 여부`}
             type="checkbox"
             checked={quest.completed}
-            disabled={record.isFinalized || isBlocked}
+            disabled={isToggleDisabled}
             onChange={() => {
               const wasCompleted = quest.completed;
               const result = toggleQuest(quest.id);
@@ -567,10 +577,23 @@ export function TodayView() {
                   대기
                 </span>
               ) : null}
+
+              {isRollbackBlocked ? (
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                  후행 완료
+                </span>
+              ) : null}
             </div>
 
             {isBlocked ? (
               <p className="mt-1 text-[11px] font-semibold text-rose-600">선행 필요: {blockedByTitles.join(", ")}</p>
+            ) : null}
+
+            {isRollbackBlocked ? (
+              <p className="mt-1 text-[11px] font-semibold text-amber-700">
+                먼저 되돌릴 퀘스트: {rollbackBlockedPreview}
+                {rollbackBlockedSuffix}
+              </p>
             ) : null}
 
             <details className="disclosure mt-2">
@@ -599,6 +622,11 @@ export function TodayView() {
                   {(quest.dependencyQuestIds ?? []).length > 0 ? (
                     <span className="rounded-full bg-slate-200 px-1.5 py-0.5 text-[10px] font-bold text-slate-700">
                       선행 {(quest.dependencyQuestIds ?? []).length}개
+                    </span>
+                  ) : null}
+                  {isRollbackBlocked ? (
+                    <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">
+                      후행 {rollbackBlockedDependentIds.length}개 완료
                     </span>
                   ) : null}
                 </div>

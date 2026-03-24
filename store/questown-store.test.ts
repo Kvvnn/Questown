@@ -78,4 +78,23 @@ describe("questown store safeguards", () => {
     const second = useQuestownStore.getState().addQuest({ title: "  read book  ", type: "main" });
     expect(second).toEqual({ ok: false, reason: "같은 타입에 동일한 퀘스트가 이미 있어요." });
   });
+
+  it("normalizes an invalid persisted currentTab during migration", async () => {
+    const migrate = useQuestownStore.persist.getOptions().migrate;
+    expect(migrate).toBeTypeOf("function");
+
+    const migrated = (await migrate?.(
+      {
+        currentTab: "broken-tab",
+        currentDateKey: "2026-03-25",
+        selectedMonth: "2026-03",
+        dailyGoal: 3,
+        weeklyMainTarget: 10,
+        recordsByDate: {}
+      },
+      5
+    )) as { currentTab?: string } | undefined;
+
+    expect(migrated?.currentTab).toBe("today");
+  });
 });

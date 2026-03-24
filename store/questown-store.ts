@@ -103,8 +103,10 @@ interface QuestownState {
 }
 
 const isQuestType = (value: unknown): value is QuestType => value === "daily" || value === "main" || value === "sub";
+const isTabType = (value: unknown): value is TabType => value === "today" || value === "town";
 
 const normalizeQuestType = (value: unknown): QuestType => (isQuestType(value) ? value : "daily");
+const normalizeTabType = (value: unknown): TabType => (isTabType(value) ? value : "today");
 
 const normalizePositiveInt = (value: unknown, fallback: number, min: number, max: number) => {
   const n = Number(value);
@@ -718,7 +720,7 @@ export const useQuestownStore = create<QuestownState>()(
         const selectedDateInTown = isDateKey(state.selectedDateInTown) ? state.selectedDateInTown : undefined;
 
         return {
-          currentTab: state.currentTab ?? "today",
+          currentTab: normalizeTabType(state.currentTab),
           currentDateKey,
           selectedMonth,
           dailyGoal: normalizePositiveInt(state.dailyGoal, 3, 1, 10),
