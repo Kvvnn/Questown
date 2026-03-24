@@ -29,6 +29,12 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, [hydrateToday, rolloverToToday]);
 
+  const focusTab = (nextTab: "today" | "town") => {
+    requestAnimationFrame(() => {
+      document.getElementById(`tab-${nextTab}`)?.focus();
+    });
+  };
+
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: "today" | "town") => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
 
@@ -36,15 +42,19 @@ export default function HomePage() {
 
     if (event.key === "Home") {
       setTab("today");
+      focusTab("today");
       return;
     }
 
     if (event.key === "End") {
       setTab("town");
+      focusTab("town");
       return;
     }
 
-    setTab(tab === "today" ? "town" : "today");
+    const nextTab = tab === "today" ? "town" : "today";
+    setTab(nextTab);
+    focusTab(nextTab);
   };
 
   return (
