@@ -153,6 +153,106 @@ describe("questown store safeguards", () => {
     expect(nextQuests.find((quest) => quest.title === "두 번째 퀘스트")?.completed).toBe(false);
   });
 
+  it("falls back to legacy text when an imported title is empty", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+
+    const result = useQuestownStore.getState().importBackup(
+      createBackupData(currentDateKey, {
+        [currentDateKey]: {
+          quests: [
+            {
+              id: "legacy-title",
+              title: "",
+              text: "레거시 제목 복구",
+              type: "main",
+              completed: false,
+              createdAt: "2026-03-25T00:00:00.000Z"
+            }
+          ]
+        }
+      }) as never
+    );
+
+    expect(result.ok).toBe(true);
+
+    const quests = useQuestownStore.getState().recordsByDate[currentDateKey]?.quests ?? [];
+    expect(quests).toHaveLength(1);
+    expect(quests[0]?.title).toBe("레거시 제목 복구");
+  });
+
+  it("skips malformed imported quest entries instead of throwing during normalization", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+
+    const result = useQuestownStore.getState().importBackup(
+      createBackupData(currentDateKey, {
+        [currentDateKey]: {
+          quests: [
+            null as never,
+            123 as never,
+            {
+              id: "broken-title",
+              title: 456 as never,
+              type: "daily",
+              completed: false,
+              createdAt: "2026-03-25T00:00:00.000Z"
+            },
+            {
+              id: "valid-text",
+              text: "정상 복원",
+              type: "sub",
+              completed: false,
+              createdAt: "2026-03-25T00:05:00.000Z"
+            }
+          ]
+        }
+      }) as never
+    );
+
+    expect(result.ok).toBe(true);
+
+    const quests = useQuestownStore.getState().recordsByDate[currentDateKey]?.quests ?? [];
+    expect(quests).toHaveLength(1);
+    expect(quests[0]).toMatchObject({ title: "정상 복원", type: "sub" });
+  });
+
+  it("normalizes string booleans from imported backups without flipping false values to true", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+
+    const result = useQuestownStore.getState().importBackup(
+      createBackupData(currentDateKey, {
+        [currentDateKey]: {
+          isFinalized: "false" as never,
+          quests: [
+            {
+              id: "string-bools",
+              title: "문자열 불리언",
+              type: "main",
+              completed: "false" as never,
+              createdAt: "2026-03-25T00:00:00.000Z",
+              focusPinned: "false" as never,
+              isRecurring: "false" as never,
+              carryOverEnabled: "false" as never
+            }
+          ]
+        }
+      }) as never
+    );
+
+    expect(result.ok).toBe(true);
+
+    const record = useQuestownStore.getState().recordsByDate[currentDateKey];
+    const quest = record?.quests[0];
+
+    expect(record?.isFinalized).toBe(false);
+    expect(quest?.completed).toBe(false);
+    expect(quest?.completedAt).toBeUndefined();
+    expect(quest?.focusPinned).toBe(false);
+    expect(quest?.isRecurring).toBe(false);
+    expect(quest?.recurrencePattern).toBe("none");
+    expect(quest?.carryOverEnabled).toBe(false);
+    expect(quest?.carryOverLimit).toBeUndefined();
+  });
+
   it("sanitizes malformed imported timestamps before queue and completion sorting", () => {
     const { currentDateKey } = useQuestownStore.getState();
 

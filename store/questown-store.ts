@@ -123,6 +123,22 @@ const normalizePositiveInt = (value: unknown, fallback: number, min: number, max
   return Math.min(max, Math.max(min, Math.round(n)));
 };
 
+const normalizeBoolean = (value: unknown, fallback = false) => {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return fallback;
+  }
+
+  if (typeof value !== "string") return fallback;
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") return true;
+  if (normalized === "false" || normalized === "0") return false;
+  return fallback;
+};
+
 const normalizeNonEmptyString = (value: unknown) => {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -215,50 +231,59 @@ const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecor
 };
 
 const normalizeQuest = (
-  raw: LegacyQuestLike,
+  raw: unknown,
   dateKey: string,
   usedQuestIds: Set<string>,
   availableQuestIds?: Set<string>
 ): QuestItem | null => {
-  const title = (raw.title ?? raw.text ?? "").trim();
+  if (!raw || typeof raw !== "object") return null;
+
+  const legacyQuest = raw as LegacyQuestLike;
+  const title = normalizeNonEmptyString(legacyQuest.title) ?? normalizeNonEmptyString(legacyQuest.text);
   if (!title) return null;
 
-  const type = normalizeQuestType(raw.type);
-  const pattern = normalizeRecurrencePattern(raw.recurrencePattern as RecurrencePattern | undefined, raw.isRecurring);
+  const completed = normalizeBoolean(legacyQuest.completed);
+  const type = normalizeQuestType(legacyQuest.type);
+  const pattern = normalizeRecurrencePattern(
+    legacyQuest.recurrencePattern as RecurrencePattern | undefined,
+    normalizeBoolean(legacyQuest.isRecurring)
+  );
   const isRecurring = pattern !== "none";
   const recurrenceIntervalDays =
-    pattern === "interval" ? normalizePositiveInt(raw.recurrenceIntervalDays, 2, 1, 30) : undefined;
+    pattern === "interval" ? normalizePositiveInt(legacyQuest.recurrenceIntervalDays, 2, 1, 30) : undefined;
 
-  const carryOverEnabled = Boolean(raw.carryOverEnabled);
-  const carryOverLimit = carryOverEnabled ? normalizePositiveInt(raw.carryOverLimit, 3, 1, 30) : undefined;
+  const carryOverEnabled = normalizeBoolean(legacyQuest.carryOverEnabled);
+  const carryOverLimit = carryOverEnabled ? normalizePositiveInt(legacyQuest.carryOverLimit, 3, 1, 30) : undefined;
 
-  const id = normalizeQuestId(raw.id, usedQuestIds);
+  const id = normalizeQuestId(legacyQuest.id, usedQuestIds);
   const fallbackCreatedAt = dateKeyToDate(dateKey).toISOString();
-  const createdAt = normalizeTimestamp(raw.createdAt, fallbackCreatedAt);
-  const completedAt = raw.completed ? normalizeTimestamp(raw.completedAt, createdAt) : undefined;
-  const recurrenceKey = normalizeNonEmptyString(raw.recurrenceKey) ?? id;
+  const createdAt = normalizeTimestamp(legacyQuest.createdAt, fallbackCreatedAt);
+  const completedAt = completed ? normalizeTimestamp(legacyQuest.completedAt, createdAt) : undefined;
+  const recurrenceKey = normalizeNonEmptyString(legacyQuest.recurrenceKey) ?? id;
 
   const quest: QuestItem = {
     id,
     title,
     type,
-    completed: Boolean(raw.completed),
+    completed,
     createdAt,
     completedAt,
-    priority: normalizeQuestPriority(raw.priority as QuestPriority | undefined, type),
-    focusPinned: Boolean(raw.focusPinned),
+    priority: normalizeQuestPriority(legacyQuest.priority as QuestPriority | undefined, type),
+    focusPinned: normalizeBoolean(legacyQuest.focusPinned),
     dependencyQuestIds: availableQuestIds
-      ? sanitizeDependencyIds(raw.dependencyQuestIds, availableQuestIds, id)
-      : normalizeDependencyIds(raw.dependencyQuestIds, id),
+      ? sanitizeDependencyIds(legacyQuest.dependencyQuestIds, availableQuestIds, id)
+      : normalizeDependencyIds(legacyQuest.dependencyQuestIds, id),
     isRecurring,
     recurrencePattern: pattern,
     recurrenceKey: isRecurring ? recurrenceKey : undefined,
-    recurrenceAnchorDate: isRecurring ? (isDateKey(raw.recurrenceAnchorDate) ? raw.recurrenceAnchorDate : dateKey) : undefined,
+    recurrenceAnchorDate: isRecurring
+      ? (isDateKey(legacyQuest.recurrenceAnchorDate) ? legacyQuest.recurrenceAnchorDate : dateKey)
+      : undefined,
     recurrenceIntervalDays,
     carryOverEnabled,
     carryOverLimit,
-    carryOverCount: carryOverEnabled ? normalizePositiveInt(raw.carryOverCount, 0, 0, 365) : undefined,
-    carryOverSourceQuestId: carryOverEnabled ? normalizeNonEmptyString(raw.carryOverSourceQuestId) : undefined
+    carryOverCount: carryOverEnabled ? normalizePositiveInt(legacyQuest.carryOverCount, 0, 0, 365) : undefined,
+    carryOverSourceQuestId: carryOverEnabled ? normalizeNonEmptyString(legacyQuest.carryOverSourceQuestId) : undefined
   };
 
   return quest;
@@ -288,9 +313,9 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
     {
       ...base,
       ...normalizedRecordState,
-      isFinalized: Boolean(raw.isFinalized)
+      isFinalized: normalizeBoolean(raw.isFinalized)
     },
-    Boolean(raw.isFinalized)
+    normalizeBoolean(raw.isFinalized)
   );
 };
 
