@@ -24,10 +24,10 @@ export const getPreferredTownDate = ({
   availableDates?: string[];
 }) => {
   const selectedDay = getDayFromDate(selectedDate, monthKey);
-  if (selectedDay && selectedDay <= dayCount) return toDateFromDay(monthKey, selectedDay);
+  if (selectedDay) return toDateFromDay(monthKey, clamp(selectedDay, 1, dayCount));
 
   const currentDay = getDayFromDate(currentDate, monthKey);
-  if (currentDay && currentDay <= dayCount) return toDateFromDay(monthKey, currentDay);
+  if (currentDay) return toDateFromDay(monthKey, clamp(currentDay, 1, dayCount));
 
   const recordedDate = availableDates
     .filter((date) => {

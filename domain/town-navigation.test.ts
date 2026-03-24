@@ -32,6 +32,28 @@ describe("town navigation", () => {
     ).toBe("2026-03-20");
   });
 
+  it("clamps selected or current dates when the target month is shorter", () => {
+    expect(
+      getPreferredTownDate({
+        monthKey: "2026-02",
+        dayCount: 28,
+        currentDate: "2026-02-14",
+        selectedDate: "2026-02-31",
+        availableDates: ["2026-02-03", "2026-02-08"]
+      })
+    ).toBe("2026-02-28");
+
+    expect(
+      getPreferredTownDate({
+        monthKey: "2026-02",
+        dayCount: 28,
+        currentDate: "2026-02-31",
+        selectedDate: "2026-01-20",
+        availableDates: ["2026-02-03", "2026-02-08"]
+      })
+    ).toBe("2026-02-28");
+  });
+
   it("falls back to the current date, then the first recorded date, then day one", () => {
     expect(
       getPreferredTownDate({

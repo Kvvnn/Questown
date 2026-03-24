@@ -293,6 +293,15 @@ export function TodayView() {
     triggerReward
   ]);
 
+  useEffect(() => {
+    if (!selectedDependencyQuestId) return;
+
+    const stillAvailable = dependencyCandidates.some((quest) => quest.id === selectedDependencyQuestId);
+    if (!stillAvailable) {
+      setSelectedDependencyQuestId("");
+    }
+  }, [dependencyCandidates, selectedDependencyQuestId]);
+
   const handleSelectType = (type: QuestType) => {
     setSelectedType(type);
     setSelectedPriority(normalizeQuestPriority(undefined, type));
@@ -752,7 +761,7 @@ export function TodayView() {
                   showQuestTitleError ? "border-rose-300 bg-rose-50/70" : "border-slate-200"
                 }`}
               />
-              <Button type="submit" className="min-h-11 bg-quest-primary text-white" disabled={isQuestTitleEmpty || isAddLocked}>
+              <Button type="submit" className="min-h-11 bg-quest-primary text-white" disabled={isAddLocked}>
                 추가
               </Button>
             </div>
