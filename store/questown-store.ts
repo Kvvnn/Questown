@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
-import { addDays, addMonths, ensureDailyRecord, getDaysInMonth, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
+import { addDays, addMonths, ensureDailyRecord, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
 import {
   getBlockedDependencyIds,
   getCompletedDependentIds,
@@ -15,7 +15,6 @@ import {
   mergeGeneratedQuests,
   normalizeRecurrencePattern
 } from "@/domain/recurrence";
-import { getPreferredTownDate } from "@/domain/town-navigation";
 import {
   AppBackupData,
   DailyRecord,
@@ -26,9 +25,9 @@ import {
   TabType
 } from "@/domain/types";
 import { normalizeImportedRecordState } from "@/store/record-normalization";
+import { getMonthKeyFromDateKey, resolveSelectedTownDate, resolveTownMonth } from "./town-selection";
 
 const MAX_QUEST_TITLE_LENGTH = 80;
-const monthKeyFromDateKey = (dateKey: string) => dateKey.slice(0, 7);
 
 interface LegacyQuestLike {
   id?: string;
@@ -230,20 +229,6 @@ const normalizeRecordsByDate = (recordsByDate?: Record<string, LegacyRecordLike>
 
 const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) =>
   recordsByDate[dateKey] ?? ensureDailyRecord(dateKey);
-
-const resolveSelectedTownDate = (
-  selectedMonth: string,
-  currentDateKey: string,
-  selectedDateInTown: string | undefined,
-  recordsByDate: Record<string, DailyRecord>
-) =>
-  getPreferredTownDate({
-    monthKey: selectedMonth,
-    dayCount: getDaysInMonth(selectedMonth),
-    currentDate: currentDateKey,
-    selectedDate: selectedDateInTown,
-    availableDates: Object.keys(recordsByDate)
-  });
 
 const prepareNextDayRecord = (fromRecord: DailyRecord, targetRecord: DailyRecord, targetDateKey: string) => {
   const generated = fromRecord.quests.flatMap((quest) => createNextDayQuestCopies(quest, targetDateKey));
@@ -572,14 +557,14 @@ export const useQuestownStore = create<QuestownState>()(
 
         set((state) => ({
           currentDateKey: nextKey,
-          selectedMonth: monthKeyFromDateKey(nextKey),
+          selectedMonth: getMonthKeyFromDateKey(nextKey),
           recordsByDate: {
             ...state.recordsByDate,
             [todayKey]: finalizedToday,
             [nextKey]: nextPrepared
           },
           selectedDateInTown: resolveSelectedTownDate(
-            monthKeyFromDateKey(nextKey),
+            getMonthKeyFromDateKey(nextKey),
             nextKey,
             state.selectedDateInTown,
             {
@@ -610,19 +595,22 @@ export const useQuestownStore = create<QuestownState>()(
         const fallbackDateKey = toDateKey();
         const activeDateKey = isDateKey(get().currentDateKey) ? get().currentDateKey : fallbackDateKey;
         const synced = syncStateToToday(get().recordsByDate, activeDateKey);
-        const selectedMonth = monthKeyFromDateKey(synced.currentDateKey);
 
-        set((state) => ({
-          currentDateKey: synced.currentDateKey,
-          selectedMonth,
-          recordsByDate: synced.recordsByDate,
-          selectedDateInTown: resolveSelectedTownDate(
+        set((state) => {
+          const selectedMonth = resolveTownMonth(state.selectedMonth, synced.currentDateKey);
+
+          return {
+            currentDateKey: synced.currentDateKey,
             selectedMonth,
-            synced.currentDateKey,
-            state.selectedDateInTown,
-            synced.recordsByDate
-          )
-        }));
+            recordsByDate: synced.recordsByDate,
+            selectedDateInTown: resolveSelectedTownDate(
+              selectedMonth,
+              synced.currentDateKey,
+              state.selectedDateInTown,
+              synced.recordsByDate
+            )
+          };
+        });
       },
 
       rolloverToToday: () => {
@@ -633,7 +621,7 @@ export const useQuestownStore = create<QuestownState>()(
 
         const activeDateKey = isDateKey(currentKey) ? currentKey : todayKey;
         const synced = syncStateToToday(get().recordsByDate, activeDateKey);
-        const selectedMonth = monthKeyFromDateKey(synced.currentDateKey);
+        const selectedMonth = resolveTownMonth(get().selectedMonth, synced.currentDateKey);
 
         set({
           currentDateKey: synced.currentDateKey,
@@ -668,7 +656,7 @@ export const useQuestownStore = create<QuestownState>()(
         const nextDate = isDateKey(data.state.currentDateKey) ? data.state.currentDateKey : toDateKey();
         const normalizedRecords = normalizeRecordsByDate(data.state.recordsByDate as Record<string, LegacyRecordLike>);
         const synced = syncStateToToday(normalizedRecords, nextDate);
-        const selectedMonth = monthKeyFromDateKey(synced.currentDateKey);
+        const selectedMonth = resolveTownMonth(data.state.selectedMonth, synced.currentDateKey);
 
         set({
           currentDateKey: synced.currentDateKey,
@@ -694,7 +682,7 @@ export const useQuestownStore = create<QuestownState>()(
 
         const currentDateKey = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
         const recordsByDate = normalizeRecordsByDate(state.recordsByDate);
-        const selectedMonth = isMonthKey(state.selectedMonth) ? state.selectedMonth : monthKeyFromDateKey(currentDateKey);
+        const selectedMonth = isMonthKey(state.selectedMonth) ? state.selectedMonth : getMonthKeyFromDateKey(currentDateKey);
         const selectedDateInTown = isDateKey(state.selectedDateInTown) ? state.selectedDateInTown : undefined;
 
         return {

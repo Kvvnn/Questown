@@ -285,6 +285,8 @@ export function MonthlyTownView() {
 
   const handleMapKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) return;
+
       const direction = directionByKey[event.key];
       if (!direction) return;
 

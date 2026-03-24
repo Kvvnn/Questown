@@ -87,6 +87,7 @@ export function TodayView() {
   const eventTimeoutRefs = useRef<number[]>([]);
   const toastTimeoutRefs = useRef<number[]>([]);
   const initializedRef = useRef(false);
+  const skipNextRewardRef = useRef(false);
   const toastIdRef = useRef(1);
 
   const dailyGoal = useQuestownStore((state) => state.dailyGoal);
@@ -166,6 +167,7 @@ export function TodayView() {
   const weeklyMainPercent = Math.round(weeklyMainProgress.rate * 100);
 
   const previousRef = useRef({
+    date: record.date,
     completedCount: record.completedCount,
     isFinalized: record.isFinalized,
     streak
@@ -227,6 +229,7 @@ export function TodayView() {
     if (!initializedRef.current) {
       initializedRef.current = true;
       previousRef.current = {
+        date: record.date,
         completedCount: record.completedCount,
         isFinalized: record.isFinalized,
         streak
@@ -235,6 +238,19 @@ export function TodayView() {
     }
 
     const prev = previousRef.current;
+
+    if (skipNextRewardRef.current || prev.date !== record.date) {
+      skipNextRewardRef.current = false;
+      clearEventQueue();
+      previousRef.current = {
+        date: record.date,
+        completedCount: record.completedCount,
+        isFinalized: record.isFinalized,
+        streak
+      };
+      return;
+    }
+
     const queue: Array<{ type: QuestAnimationEventType; text: string; tone: RewardToastItem["tone"] }> = [];
 
     if (record.completedCount > prev.completedCount) {
@@ -280,6 +296,7 @@ export function TodayView() {
     });
 
     previousRef.current = {
+      date: record.date,
       completedCount: record.completedCount,
       isFinalized: record.isFinalized,
       streak
@@ -289,6 +306,7 @@ export function TodayView() {
     dailyGoal,
     record.completedCount,
     record.completionRate,
+    record.date,
     record.isFinalized,
     streak,
     triggerReward
@@ -414,9 +432,14 @@ export function TodayView() {
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as AppBackupData;
+      skipNextRewardRef.current = true;
       const result = importBackup(parsed);
+      if (!result.ok) {
+        skipNextRewardRef.current = false;
+      }
       setMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.");
     } catch {
+      skipNextRewardRef.current = false;
       setMessage("JSON 파일을 읽지 못했어요.");
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
