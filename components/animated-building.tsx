@@ -77,6 +77,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
     completedQuestTypes = []
   }) => {
     const eventType = animationEvent?.type;
+    const displayedRoofType = finalized && height > 0 ? roofType : "none";
     const showBurst =
       !reducedMotion &&
       eventType !== "idle" &&
@@ -124,13 +125,13 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
         </AnimatePresence>
 
         <AnimatePresence>
-          {finalized && roofType !== "none" ? (
+          {displayedRoofType !== "none" ? (
             <motion.div
-              key={`roof-${roofType}-${animationEvent?.token ?? 0}`}
+              key={`roof-${displayedRoofType}-${animationEvent?.token ?? 0}`}
               initial={reducedMotion ? false : { y: 18, opacity: 0, scale: 0.9 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               transition={{ type: "spring", stiffness: 190, damping: 12 }}
-              className={`h-0 w-0 border-l-[26px] border-r-[26px] border-b-[20px] border-l-transparent border-r-transparent ${roofColorMap[roofType]}`}
+              className={`h-0 w-0 border-l-[26px] border-r-[26px] border-b-[20px] border-l-transparent border-r-transparent ${roofColorMap[displayedRoofType]}`}
             />
           ) : null}
         </AnimatePresence>
@@ -165,9 +166,9 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
         </div>
 
         <div className="h-4 w-32 rounded-xl bg-slate-300/90 shadow-inner" />
-        {finalized && roofType !== "none" ? (
+        {displayedRoofType !== "none" ? (
           <span className="rounded-full border border-white/80 bg-white/80 px-2 py-1 text-xs font-bold text-slate-700 backdrop-blur">
-            지붕: {roofTypeLabel[roofType]}
+            지붕: {roofTypeLabel[displayedRoofType]}
           </span>
         ) : null}
       </motion.div>

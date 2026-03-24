@@ -7,7 +7,7 @@ import { CssFramerBuildingRenderer } from "@/components/animated-building";
 import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button, Card } from "@/components/ui";
 import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
-import { roofTypeLabel } from "@/domain/building";
+import { getDisplayedRoofType, roofTypeLabel } from "@/domain/building";
 import {
   getExecutionQueue,
   getFocusQuestIds,
@@ -127,6 +127,7 @@ export function TodayView() {
   };
 
   const percent = Math.round(record.completionRate * 100);
+  const displayedRoofType = getDisplayedRoofType(record.completedCount, record.roofType, record.isFinalized);
   const streak = useMemo(
     () => getStreakCount(recordsByDate, currentDateKey, dailyGoal),
     [recordsByDate, currentDateKey, dailyGoal]
@@ -719,13 +720,13 @@ export function TodayView() {
               <p className="text-xs font-semibold text-slate-600">{feedback}</p>
             </div>
             <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
-              지붕: {record.isFinalized ? roofTypeLabel[record.roofType] : roofTypeLabel.none}
+              지붕: {roofTypeLabel[displayedRoofType]}
             </div>
           </div>
 
           {CssFramerBuildingRenderer.render({
             height,
-            roofType: record.roofType,
+            roofType: displayedRoofType,
             finalized: record.isFinalized,
             animationEvent,
             reducedMotion: reduceMotion,

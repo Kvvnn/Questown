@@ -20,3 +20,8 @@ export const getRoofType = (completionRate: number): RoofType => {
   if (percent >= 40) return "mid";
   return "low";
 };
+
+export const getDisplayedRoofType = (completedCount: number, roofType: RoofType, isFinalized: boolean): RoofType => {
+  if (!isFinalized || completedCount <= 0) return "none";
+  return roofType;
+};

@@ -4,8 +4,11 @@ import { DailyRecord } from "../domain/types";
 
 export const getMonthKeyFromDateKey = (dateKey: string) => dateKey.slice(0, 7);
 
-export const resolveTownMonth = (selectedMonth: string | undefined, fallbackDateKey: string) =>
-  isMonthKey(selectedMonth) ? selectedMonth : getMonthKeyFromDateKey(fallbackDateKey);
+export const resolveTownMonth = (selectedMonth: string | undefined, fallbackDateKey: string) => {
+  const fallbackMonth = getMonthKeyFromDateKey(fallbackDateKey);
+  if (!isMonthKey(selectedMonth)) return fallbackMonth;
+  return selectedMonth > fallbackMonth ? fallbackMonth : selectedMonth;
+};
 
 export const resolveSelectedTownDate = (
   selectedMonth: string,
@@ -20,4 +23,3 @@ export const resolveSelectedTownDate = (
     selectedDate: selectedDateInTown,
     availableDates: Object.keys(recordsByDate)
   });
-

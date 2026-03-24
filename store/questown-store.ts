@@ -578,7 +578,7 @@ export const useQuestownStore = create<QuestownState>()(
 
       moveMonth: (delta) =>
         set((state) => {
-          const nextMonth = addMonths(state.selectedMonth, delta);
+          const nextMonth = resolveTownMonth(addMonths(state.selectedMonth, delta), state.currentDateKey);
           return {
             selectedMonth: nextMonth,
             selectedDateInTown: resolveSelectedTownDate(

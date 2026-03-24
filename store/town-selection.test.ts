@@ -7,6 +7,10 @@ describe("town selection helpers", () => {
     expect(resolveTownMonth(undefined, "2026-03-25")).toBe("2026-03");
   });
 
+  it("clamps future town months back to the current month", () => {
+    expect(resolveTownMonth("2026-04", "2026-03-25")).toBe("2026-03");
+  });
+
   it("keeps a valid selected town date within the chosen month", () => {
     expect(
       resolveSelectedTownDate("2026-02", "2026-03-25", "2026-02-14", {

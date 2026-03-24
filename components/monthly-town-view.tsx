@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Button, Card } from "@/components/ui";
-import { getBuildingHeight, roofTypeLabel } from "@/domain/building";
+import { getBuildingHeight, getDisplayedRoofType, roofTypeLabel } from "@/domain/building";
 import { getDaysInMonth } from "@/domain/date";
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getDominantQuestType, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
@@ -89,6 +89,7 @@ interface TownLotProps {
   plot: TownPlot;
   layout: TownLayout;
   record?: DailyRecord;
+  currentDateKey: string;
   selected: boolean;
   reducedMotion: boolean;
   onSelect: (date: string) => void;
@@ -101,7 +102,7 @@ const getLotAriaLabel = (plot: TownPlot, floors: number, record?: DailyRecord, d
   }
 
   const dominantLabel = dominantType ? `${questTypeShortLabel[dominantType]} 중심` : "타입 미정";
-  const roofLabel = record.isFinalized ? roofTypeLabel[record.roofType] : roofTypeLabel.none;
+  const roofLabel = roofTypeLabel[getDisplayedRoofType(record.completedCount, record.roofType, record.isFinalized)];
 
   return `${plot.date} 건물, ${floors}층, 완료 ${record.completedCount}/${record.totalCount}, ${dominantLabel}, ${roofLabel}`;
 };
@@ -110,6 +111,7 @@ const TownLot = memo(function TownLot({
   plot,
   layout,
   record,
+  currentDateKey,
   selected,
   reducedMotion,
   onSelect,
@@ -117,7 +119,7 @@ const TownLot = memo(function TownLot({
 }: TownLotProps) {
   const height = getBuildingHeight(record?.completedCount ?? 0);
   const floors = Math.min(height, 12);
-  const roofType = record?.isFinalized ? record.roofType : "none";
+  const roofType = getDisplayedRoofType(record?.completedCount ?? 0, record?.roofType ?? "none", Boolean(record?.isFinalized));
   const dominantType = getDominantQuestType(record, "completed") ?? getDominantQuestType(record, "total");
   const typeAccent = getTypeAccent(dominantType);
 
@@ -143,7 +145,7 @@ const TownLot = memo(function TownLot({
       }}
       aria-label={getLotAriaLabel(plot, floors, record, dominantType)}
       aria-pressed={selected}
-      aria-current={selected ? "date" : undefined}
+      aria-current={plot.date === currentDateKey ? "date" : undefined}
       className="group absolute text-left outline-none focus-visible:z-10"
       style={{
         left: layout.padding + plot.col * layout.slot,
@@ -450,6 +452,7 @@ export function MonthlyTownView() {
                 plot={plot}
                 layout={layout}
                 record={recordsByDate[plot.date]}
+                currentDateKey={currentDateKey}
                 selected={activeSelectedDate === plot.date}
                 reducedMotion={reducedMotion}
                 onSelect={selectDateInTown}
@@ -507,7 +510,10 @@ export function MonthlyTownView() {
               <div className="metric-pill text-left">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">지붕 / 상태</p>
                 <p className="mt-1 text-sm font-black text-slate-800">
-                  {roofTypeLabel[selectedRecord.roofType]} · {selectedRecord.isFinalized ? "마감됨" : "진행 중"}
+                  {roofTypeLabel[
+                    getDisplayedRoofType(selectedRecord.completedCount, selectedRecord.roofType, selectedRecord.isFinalized)
+                  ]}{" "}
+                  · {selectedRecord.isFinalized ? "마감됨" : "진행 중"}
                 </p>
               </div>
             </div>
