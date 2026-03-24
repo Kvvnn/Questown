@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect } from "react";
+import { KeyboardEvent, useEffect } from "react";
 import { Button, Card } from "@/components/ui";
 import { useQuestownStore } from "@/store/questown-store";
 
@@ -29,6 +29,24 @@ export default function HomePage() {
     return () => clearInterval(id);
   }, [hydrateToday, rolloverToToday]);
 
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: "today" | "town") => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+
+    event.preventDefault();
+
+    if (event.key === "Home") {
+      setTab("today");
+      return;
+    }
+
+    if (event.key === "End") {
+      setTab("town");
+      return;
+    }
+
+    setTab(tab === "today" ? "town" : "today");
+  };
+
   return (
     <main id="main-content" className="mx-auto min-h-screen w-full max-w-xl space-y-4 px-4 py-6">
       <a
@@ -52,8 +70,10 @@ export default function HomePage() {
             id="tab-today"
             aria-controls="panel-today"
             aria-selected={currentTab === "today"}
+            tabIndex={currentTab === "today" ? 0 : -1}
             className={`min-h-11 ${currentTab === "today" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
             onClick={() => setTab("today")}
+            onKeyDown={(event) => handleTabKeyDown(event, "today")}
           >
             Today
           </Button>
@@ -62,8 +82,10 @@ export default function HomePage() {
             id="tab-town"
             aria-controls="panel-town"
             aria-selected={currentTab === "town"}
+            tabIndex={currentTab === "town" ? 0 : -1}
             className={`min-h-11 ${currentTab === "town" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
             onClick={() => setTab("town")}
+            onKeyDown={(event) => handleTabKeyDown(event, "town")}
           >
             Town
           </Button>
