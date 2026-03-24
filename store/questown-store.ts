@@ -5,11 +5,18 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
 import { addDays, addMonths, ensureDailyRecord, toDateKey, toMonthKey } from "@/domain/date";
 import { getQuestCounts } from "@/domain/quest";
-import { AppBackupData, DailyRecord, QuestItem, QuestType, TabType } from "@/domain/types";
+import {
+  createCarryOverQuestCopy,
+  createRecurringQuestCopy,
+  isRecurringDueOnDate,
+  mergeGeneratedQuests,
+  normalizeRecurrencePattern
+} from "@/domain/recurrence";
+import { AppBackupData, DailyRecord, QuestItem, QuestType, RecurrencePattern, TabType } from "@/domain/types";
 
 const MAX_QUEST_TITLE_LENGTH = 80;
 
-interface LegacyTodoLike {
+interface LegacyQuestLike {
   id?: string;
   text?: string;
   title?: string;
@@ -19,13 +26,29 @@ interface LegacyTodoLike {
   completedAt?: string;
   isRecurring?: boolean;
   recurrenceKey?: string;
+  recurrencePattern?: string;
+  recurrenceIntervalDays?: number;
+  recurrenceAnchorDate?: string;
+  carryOverEnabled?: boolean;
+  carryOverLimit?: number;
+  carryOverCount?: number;
+  carryOverSourceQuestId?: string;
 }
 
 interface LegacyRecordLike {
   date?: string;
-  quests?: LegacyTodoLike[];
-  todos?: LegacyTodoLike[];
+  quests?: LegacyQuestLike[];
+  todos?: LegacyQuestLike[];
   isFinalized?: boolean;
+}
+
+interface AddQuestInput {
+  title: string;
+  type: QuestType;
+  recurrencePattern?: RecurrencePattern;
+  recurrenceIntervalDays?: number;
+  carryOverEnabled?: boolean;
+  carryOverLimit?: number;
 }
 
 interface QuestownState {
@@ -38,7 +61,7 @@ interface QuestownState {
 
   setTab: (tab: TabType) => void;
   setDailyGoal: (goal: number) => void;
-  addQuest: (title: string, type: QuestType) => { ok: boolean; reason?: string };
+  addQuest: (input: AddQuestInput) => { ok: boolean; reason?: string };
   toggleQuest: (questId: string) => { ok: boolean; reason?: string };
   deleteQuest: (questId: string) => { ok: boolean; reason?: string };
   finalizeCurrentDay: () => void;
@@ -54,20 +77,12 @@ interface QuestownState {
 
 const isQuestType = (value: unknown): value is QuestType => value === "daily" || value === "main" || value === "sub";
 
-const normalizeQuest = (raw: LegacyTodoLike): QuestItem | null => {
-  const title = (raw.title ?? raw.text ?? "").trim();
-  if (!title) return null;
+const normalizeQuestType = (value: unknown): QuestType => (isQuestType(value) ? value : "daily");
 
-  return {
-    id: raw.id ?? crypto.randomUUID(),
-    title,
-    type: isQuestType(raw.type) ? raw.type : "daily",
-    completed: Boolean(raw.completed),
-    createdAt: raw.createdAt ?? new Date().toISOString(),
-    completedAt: raw.completed ? raw.completedAt ?? new Date().toISOString() : undefined,
-    isRecurring: raw.isRecurring,
-    recurrenceKey: raw.recurrenceKey
-  };
+const normalizePositiveInt = (value: unknown, fallback: number, min: number, max: number) => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n)));
 };
 
 const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
@@ -88,12 +103,44 @@ const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecor
   };
 };
 
+const normalizeQuest = (raw: LegacyQuestLike, dateKey: string): QuestItem | null => {
+  const title = (raw.title ?? raw.text ?? "").trim();
+  if (!title) return null;
+
+  const type = normalizeQuestType(raw.type);
+  const pattern = normalizeRecurrencePattern(raw.recurrencePattern as RecurrencePattern | undefined, raw.isRecurring);
+  const isRecurring = pattern !== "none";
+  const recurrenceIntervalDays =
+    pattern === "interval" ? normalizePositiveInt(raw.recurrenceIntervalDays, 2, 1, 30) : undefined;
+
+  const carryOverEnabled = Boolean(raw.carryOverEnabled);
+  const carryOverLimit = carryOverEnabled ? normalizePositiveInt(raw.carryOverLimit, 3, 1, 30) : undefined;
+
+  return {
+    id: raw.id ?? crypto.randomUUID(),
+    title,
+    type,
+    completed: Boolean(raw.completed),
+    createdAt: raw.createdAt ?? new Date().toISOString(),
+    completedAt: raw.completed ? raw.completedAt ?? new Date().toISOString() : undefined,
+    isRecurring,
+    recurrencePattern: pattern,
+    recurrenceKey: isRecurring ? raw.recurrenceKey ?? raw.id ?? crypto.randomUUID() : undefined,
+    recurrenceAnchorDate: isRecurring ? raw.recurrenceAnchorDate ?? dateKey : undefined,
+    recurrenceIntervalDays,
+    carryOverEnabled,
+    carryOverLimit,
+    carryOverCount: carryOverEnabled ? normalizePositiveInt(raw.carryOverCount, 0, 0, 365) : undefined,
+    carryOverSourceQuestId: carryOverEnabled ? raw.carryOverSourceQuestId : undefined
+  };
+};
+
 const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord => {
   const base = ensureDailyRecord(dateKey);
   if (!raw) return base;
 
   const source = Array.isArray(raw.quests) ? raw.quests : Array.isArray(raw.todos) ? raw.todos : [];
-  const quests = source.map(normalizeQuest).filter((quest): quest is QuestItem => Boolean(quest));
+  const quests = source.map((quest) => normalizeQuest(quest, dateKey)).filter((quest): quest is QuestItem => Boolean(quest));
 
   return recalc(
     {
@@ -106,8 +153,66 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
   );
 };
 
-const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) => {
-  return recordsByDate[dateKey] ?? ensureDailyRecord(dateKey);
+const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) =>
+  recordsByDate[dateKey] ?? ensureDailyRecord(dateKey);
+
+const prepareNextDayRecord = (fromRecord: DailyRecord, targetRecord: DailyRecord, targetDateKey: string) => {
+  const generated = fromRecord.quests.flatMap((quest) => {
+    const items: QuestItem[] = [];
+
+    const carryOver = createCarryOverQuestCopy(quest);
+    if (carryOver) items.push(carryOver);
+
+    if (isRecurringDueOnDate(quest, targetDateKey)) {
+      items.push(createRecurringQuestCopy(quest, targetDateKey));
+    }
+
+    return items;
+  });
+
+  const mergedQuests = mergeGeneratedQuests(targetRecord.quests, generated);
+
+  return recalc(
+    {
+      ...targetRecord,
+      date: targetDateKey,
+      quests: mergedQuests,
+      isFinalized: false,
+      roofType: "none"
+    },
+    false
+  );
+};
+
+const rollForwardRecords = (
+  recordsByDate: Record<string, DailyRecord>,
+  fromDateKey: string,
+  toDateKey: string
+): Record<string, DailyRecord> => {
+  const records = { ...recordsByDate };
+
+  if (fromDateKey >= toDateKey) {
+    if (!records[toDateKey]) records[toDateKey] = ensureDailyRecord(toDateKey);
+    return records;
+  }
+
+  let cursorKey = fromDateKey;
+  let cursorRecord = recalc(getRecord(records, cursorKey), true);
+  records[cursorKey] = cursorRecord;
+
+  while (cursorKey < toDateKey) {
+    const nextKey = addDays(cursorKey, 1);
+    const nextBase = getRecord(records, nextKey);
+    const nextPrepared = prepareNextDayRecord(cursorRecord, nextBase, nextKey);
+    const shouldFinalize = nextKey !== toDateKey;
+    const nextRecord = shouldFinalize ? recalc(nextPrepared, true) : nextPrepared;
+
+    records[nextKey] = nextRecord;
+    cursorKey = nextKey;
+    cursorRecord = nextRecord;
+  }
+
+  return records;
 };
 
 export const useQuestownStore = create<QuestownState>()(
@@ -122,17 +227,29 @@ export const useQuestownStore = create<QuestownState>()(
       setTab: (tab) => set({ currentTab: tab }),
 
       setDailyGoal: (goal) => {
-        const nextGoal = Math.min(10, Math.max(1, Math.round(goal || 1)));
+        const nextGoal = normalizePositiveInt(goal, 3, 1, 10);
         set({ dailyGoal: nextGoal });
       },
 
-      addQuest: (title, type) => {
+      addQuest: ({
+        title,
+        type,
+        recurrencePattern = "none",
+        recurrenceIntervalDays,
+        carryOverEnabled = false,
+        carryOverLimit
+      }) => {
         const trimmed = title.trim();
         if (!trimmed) return { ok: false, reason: "퀘스트를 입력해 주세요." };
         if (!isQuestType(type)) return { ok: false, reason: "올바른 퀘스트 타입이 아니에요." };
         if (trimmed.length > MAX_QUEST_TITLE_LENGTH) {
           return { ok: false, reason: `퀘스트는 ${MAX_QUEST_TITLE_LENGTH}자 이하로 입력해 주세요.` };
         }
+
+        const pattern = normalizeRecurrencePattern(recurrencePattern, false);
+        const isRecurring = pattern !== "none";
+        const intervalDays = pattern === "interval" ? normalizePositiveInt(recurrenceIntervalDays, 2, 1, 30) : undefined;
+        const carryLimit = carryOverEnabled ? normalizePositiveInt(carryOverLimit, 3, 1, 30) : undefined;
 
         const dateKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, dateKey);
@@ -152,7 +269,15 @@ export const useQuestownStore = create<QuestownState>()(
                 title: trimmed,
                 type,
                 completed: false,
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
+                isRecurring,
+                recurrencePattern: pattern,
+                recurrenceKey: isRecurring ? crypto.randomUUID() : undefined,
+                recurrenceAnchorDate: isRecurring ? dateKey : undefined,
+                recurrenceIntervalDays: intervalDays,
+                carryOverEnabled,
+                carryOverLimit: carryLimit,
+                carryOverCount: carryOverEnabled ? 0 : undefined
               }
             ],
             isFinalized: false,
@@ -246,16 +371,18 @@ export const useQuestownStore = create<QuestownState>()(
       goNextDayForDev: () => {
         const todayKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, todayKey);
-        const finalized = recalc(today, true);
+        const finalizedToday = recalc(today, true);
         const nextKey = addDays(todayKey, 1);
+        const nextBase = getRecord(get().recordsByDate, nextKey);
+        const nextPrepared = prepareNextDayRecord(finalizedToday, nextBase, nextKey);
 
         set((state) => ({
           currentDateKey: nextKey,
           selectedMonth: toMonthKey(new Date(`${nextKey}T00:00:00+09:00`)),
           recordsByDate: {
             ...state.recordsByDate,
-            [todayKey]: finalized,
-            [nextKey]: state.recordsByDate[nextKey] ?? ensureDailyRecord(nextKey)
+            [todayKey]: finalizedToday,
+            [nextKey]: nextPrepared
           }
         }));
       },
@@ -266,37 +393,45 @@ export const useQuestownStore = create<QuestownState>()(
       hydrateToday: () => {
         const actualTodayKey = toDateKey();
         const activeDateKey = get().currentDateKey || actualTodayKey;
-        const dateKey = activeDateKey < actualTodayKey ? actualTodayKey : activeDateKey;
-        const rec = getRecord(get().recordsByDate, dateKey);
 
+        if (activeDateKey < actualTodayKey) {
+          const rolled = rollForwardRecords(get().recordsByDate, activeDateKey, actualTodayKey);
+          set({
+            currentDateKey: actualTodayKey,
+            selectedMonth: toMonthKey(),
+            recordsByDate: rolled
+          });
+          return;
+        }
+
+        const current = getRecord(get().recordsByDate, activeDateKey);
         set((state) => ({
-          currentDateKey: dateKey,
-          selectedMonth: toMonthKey(new Date(`${dateKey}T00:00:00+09:00`)),
-          recordsByDate: { ...state.recordsByDate, [dateKey]: recalc(rec, rec.isFinalized) }
+          currentDateKey: activeDateKey,
+          selectedMonth: toMonthKey(new Date(`${activeDateKey}T00:00:00+09:00`)),
+          recordsByDate: {
+            ...state.recordsByDate,
+            [activeDateKey]: recalc(current, current.isFinalized)
+          }
         }));
       },
 
       rolloverToToday: () => {
         const todayKey = toDateKey();
         const currentKey = get().currentDateKey;
-        if (todayKey === currentKey) return;
 
-        const currentRecord = getRecord(get().recordsByDate, currentKey);
-        const finalizedCurrent = currentRecord.isFinalized ? currentRecord : recalc(currentRecord, true);
+        if (currentKey >= todayKey) return;
 
-        set((state) => ({
+        const rolled = rollForwardRecords(get().recordsByDate, currentKey, todayKey);
+
+        set({
           currentDateKey: todayKey,
           selectedMonth: toMonthKey(),
-          recordsByDate: {
-            ...state.recordsByDate,
-            [currentKey]: finalizedCurrent,
-            [todayKey]: state.recordsByDate[todayKey] ?? ensureDailyRecord(todayKey)
-          }
-        }));
+          recordsByDate: rolled
+        });
       },
 
       exportBackup: () => ({
-        version: 2,
+        version: 3,
         exportedAt: new Date().toISOString(),
         state: {
           currentDateKey: get().currentDateKey,
@@ -330,7 +465,7 @@ export const useQuestownStore = create<QuestownState>()(
     }),
     {
       name: "questown-mvp-storage",
-      version: 4,
+      version: 5,
       storage: createJSONStorage(() => localStorage),
       migrate: (persistedState: unknown) => {
         const state = (persistedState ?? {}) as Partial<QuestownState> & {

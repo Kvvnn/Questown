@@ -2,6 +2,8 @@ export type RoofType = "none" | "low" | "mid" | "high";
 
 export type QuestType = "daily" | "main" | "sub";
 
+export type RecurrencePattern = "none" | "daily" | "weekdays" | "weekly" | "interval";
+
 export interface QuestTypeCounter {
   daily: number;
   main: number;
@@ -15,8 +17,19 @@ export interface QuestItem {
   completed: boolean;
   createdAt: string;
   completedAt?: string;
+
+  // Recurrence metadata
   isRecurring?: boolean;
   recurrenceKey?: string;
+  recurrencePattern?: RecurrencePattern;
+  recurrenceIntervalDays?: number;
+  recurrenceAnchorDate?: string;
+
+  // Carry-over metadata
+  carryOverEnabled?: boolean;
+  carryOverLimit?: number;
+  carryOverCount?: number;
+  carryOverSourceQuestId?: string;
 }
 
 export interface DailyRecord {

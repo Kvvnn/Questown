@@ -10,7 +10,7 @@ import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/anima
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getStreakCount, getWeeklySummary } from "@/domain/progress";
 import { getCompletedQuestTypes, questTypeLabel, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
-import { AppBackupData, QuestItem, QuestType } from "@/domain/types";
+import { AppBackupData, QuestItem, QuestType, RecurrencePattern } from "@/domain/types";
 import { useQuestownStore, useTodayBuildingHeight, useTodayRecord } from "@/store/questown-store";
 
 const sectionDescription: Record<QuestType, string> = {
@@ -22,6 +22,14 @@ const sectionDescription: Record<QuestType, string> = {
 const sectionOrder: QuestType[] = ["main", "daily", "sub"];
 
 const upbeatMessages = ["좋아, +1 Floor!", "Quest Complete!", "오늘 town이 자라고 있어요"];
+
+const recurrenceLabel: Record<RecurrencePattern, string> = {
+  none: "반복 없음",
+  daily: "매일",
+  weekdays: "평일",
+  weekly: "매주",
+  interval: "N일 간격"
+};
 
 const questTypeSelectorActiveClass: Record<QuestType, string> = {
   daily: "bg-gradient-to-r from-blue-500 to-cyan-500 text-white ring-2 ring-blue-200 shadow-[0_6px_0_rgba(59,130,246,0.22)]",
@@ -40,6 +48,10 @@ export function TodayView() {
   const height = useTodayBuildingHeight();
   const [titleInput, setTitleInput] = useState("");
   const [selectedType, setSelectedType] = useState<QuestType>("main");
+  const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>("none");
+  const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(2);
+  const [carryOverEnabled, setCarryOverEnabled] = useState(true);
+  const [carryOverLimit, setCarryOverLimit] = useState(3);
   const [message, setMessage] = useState<string | null>(null);
   const [toasts, setToasts] = useState<RewardToastItem[]>([]);
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
@@ -220,7 +232,15 @@ export function TodayView() {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    const result = addQuest(titleInput, selectedType);
+    const result = addQuest({
+      title: titleInput,
+      type: selectedType,
+      recurrencePattern,
+      recurrenceIntervalDays: recurrencePattern === "interval" ? recurrenceIntervalDays : undefined,
+      carryOverEnabled,
+      carryOverLimit: carryOverEnabled ? carryOverLimit : undefined
+    });
+
     if (!result.ok) {
       setMessage(result.reason ?? "추가에 실패했어요.");
       return;
@@ -232,6 +252,23 @@ export function TodayView() {
 
   const onGoalChange = (e: ChangeEvent<HTMLInputElement>) => {
     setDailyGoal(Number(e.target.value));
+  };
+
+  const onRecurrencePatternChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value as RecurrencePattern;
+    setRecurrencePattern(value);
+    if (value !== "interval") {
+      setRecurrenceIntervalDays(2);
+    }
+  };
+
+  const onCarryOverEnabledChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setCarryOverEnabled(e.target.checked);
+  };
+
+  const onCarryOverLimitChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const next = Math.max(1, Math.min(30, Math.round(Number(e.target.value) || 1)));
+    setCarryOverLimit(next);
   };
 
   const onFinalizeDay = () => {
@@ -427,7 +464,15 @@ export function TodayView() {
                   key={type}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => setSelectedType(type)}
+                  onClick={() => {
+                    setSelectedType(type);
+                    if (type === "daily" && recurrencePattern === "none") {
+                      setRecurrencePattern("daily");
+                    }
+                    if (type === "main" && !carryOverEnabled) {
+                      setCarryOverEnabled(true);
+                    }
+                  }}
                   className={`min-h-11 rounded-xl border px-2 py-2 text-sm font-bold transition ${
                     active
                       ? `${questTypeSelectorActiveClass[type]} border-transparent`
@@ -462,6 +507,61 @@ export function TodayView() {
         <p id="quest-input-hint" className="text-xs text-slate-500">
           Daily/Main/Sub 중 타입을 먼저 고르고 퀘스트를 추가하세요.
         </p>
+
+        <div className="mt-3 soft-panel space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-semibold">반복 규칙</label>
+            <select
+              value={recurrencePattern}
+              onChange={onRecurrencePatternChange}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
+              aria-label="퀘스트 반복 규칙"
+            >
+              {(Object.keys(recurrenceLabel) as RecurrencePattern[]).map((pattern) => (
+                <option key={pattern} value={pattern}>
+                  {recurrenceLabel[pattern]}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {recurrencePattern === "interval" ? (
+            <div>
+              <label className="mb-1 block text-sm font-semibold">간격 일수 ({recurrenceIntervalDays}일)</label>
+              <input
+                type="range"
+                min={1}
+                max={14}
+                value={recurrenceIntervalDays}
+                onChange={(e) => setRecurrenceIntervalDays(Math.max(1, Number(e.target.value) || 1))}
+                className="w-full accent-indigo-500"
+                aria-label="반복 간격 일수 설정"
+              />
+            </div>
+          ) : null}
+
+          <div className="rounded-xl border border-slate-200 bg-white p-2">
+            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              <input type="checkbox" checked={carryOverEnabled} onChange={onCarryOverEnabledChange} className="h-4 w-4" />
+              미완료 Quest를 다음 날로 이월
+            </label>
+
+            {carryOverEnabled ? (
+              <div className="mt-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">최대 이월 횟수 ({carryOverLimit})</label>
+                <input
+                  type="range"
+                  min={1}
+                  max={14}
+                  value={carryOverLimit}
+                  onChange={onCarryOverLimitChange}
+                  className="w-full accent-orange-500"
+                  aria-label="최대 이월 횟수 설정"
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
 
         <div className="mt-3 soft-panel">
           <label className="mb-1 block text-sm font-semibold">일일 목표치 ({dailyGoal})</label>
