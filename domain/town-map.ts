@@ -36,21 +36,20 @@ export interface TownLayout {
   roadRows: number[];
 }
 
-const GRID_COLS = 12;
-const GRID_ROWS = 9;
-const TILE = 44;
-const GAP = 10;
-const PADDING = 24;
+const GRID_COLS = 7;
+const GRID_ROWS = 6;
+const TILE = 58;
+const GAP = 18;
+const PADDING = 28;
 const SLOT = TILE + GAP;
 
-const ROAD_COLS = [3, 8];
-const ROAD_ROWS = [2, 6];
-
 const DISTRICTS: DistrictZone[] = [
-  { name: "Harbor", rowStart: 0, rowEnd: 1, tintClass: "from-cyan-200/45 to-blue-200/20" },
-  { name: "Market", rowStart: 2, rowEnd: 3, tintClass: "from-violet-200/45 to-indigo-200/20" },
-  { name: "Garden", rowStart: 4, rowEnd: 5, tintClass: "from-emerald-200/45 to-lime-200/20" },
-  { name: "Hill", rowStart: 6, rowEnd: 8, tintClass: "from-amber-200/45 to-orange-200/20" }
+  { name: "Week 1", rowStart: 0, rowEnd: 0, tintClass: "from-cyan-200/45 to-blue-200/20" },
+  { name: "Week 2", rowStart: 1, rowEnd: 1, tintClass: "from-violet-200/45 to-indigo-200/20" },
+  { name: "Week 3", rowStart: 2, rowEnd: 2, tintClass: "from-emerald-200/45 to-lime-200/20" },
+  { name: "Week 4", rowStart: 3, rowEnd: 3, tintClass: "from-amber-200/45 to-orange-200/20" },
+  { name: "Week 5", rowStart: 4, rowEnd: 4, tintClass: "from-pink-200/45 to-fuchsia-200/20" },
+  { name: "Week 6", rowStart: 5, rowEnd: 5, tintClass: "from-slate-200/45 to-slate-100/20" }
 ];
 
 const hashString = (input: string) => {
@@ -72,52 +71,68 @@ const createRng = (seed: number) => {
   };
 };
 
-const shuffle = <T>(items: T[], rng: () => number) => {
-  const arr = [...items];
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(rng() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
+const weekdayMap: Record<string, number> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6
 };
 
-const isRoad = (col: number, row: number) => ROAD_COLS.includes(col) || ROAD_ROWS.includes(row);
+const getFirstWeekday = (monthKey: string) => {
+  const date = new Date(`${monthKey}-01T00:00:00+09:00`);
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", weekday: "short" }).format(date);
+  return weekdayMap[weekday] ?? 0;
+};
 
-const districtForRow = (row: number) => DISTRICTS.find((zone) => row >= zone.rowStart && row <= zone.rowEnd)?.name ?? "Central";
+const districtForRow = (row: number) => DISTRICTS.find((zone) => row >= zone.rowStart && row <= zone.rowEnd)?.name ?? "Week 1";
 
 const toDate = (monthKey: string, day: number) => `${monthKey}-${String(day).padStart(2, "0")}`;
 
-export const createTownLayout = (monthKey: string, dayCount: number): TownLayout => {
-  const rng = createRng(hashString(monthKey));
+const roadColumns = () => Array.from({ length: GRID_COLS - 1 }, (_, idx) => idx);
+const roadRows = () => Array.from({ length: GRID_ROWS - 1 }, (_, idx) => idx);
 
-  const candidates: Array<{ col: number; row: number }> = [];
+export const createTownLayout = (monthKey: string, dayCount: number): TownLayout => {
+  const firstWeekday = getFirstWeekday(monthKey);
+
+  const plots: TownPlot[] = Array.from({ length: dayCount }, (_, index) => {
+    const day = index + 1;
+    const slotIndex = firstWeekday + index;
+    const row = Math.floor(slotIndex / GRID_COLS);
+    const col = slotIndex % GRID_COLS;
+
+    return {
+      day,
+      date: toDate(monthKey, day),
+      col,
+      row,
+      district: districtForRow(row)
+    };
+  });
+
+  const used = new Set(plots.map((plot) => `${plot.col}-${plot.row}`));
+  const empties: Array<{ col: number; row: number }> = [];
+
   for (let row = 0; row < GRID_ROWS; row += 1) {
     for (let col = 0; col < GRID_COLS; col += 1) {
-      if (!isRoad(col, row)) {
-        candidates.push({ col, row });
-      }
+      const key = `${col}-${row}`;
+      if (!used.has(key)) empties.push({ col, row });
     }
   }
 
-  const shuffled = shuffle(candidates, rng);
-  const selected = shuffled.slice(0, dayCount);
-  const rest = shuffled.slice(dayCount);
-
-  const plots = selected.map((slot, index) => ({
-    day: index + 1,
-    date: toDate(monthKey, index + 1),
-    col: slot.col,
-    row: slot.row,
-    district: districtForRow(slot.row)
-  }));
-
+  const rng = createRng(hashString(monthKey));
   const sceneryKinds: TownSceneryTile["kind"][] = ["park", "plaza", "pond"];
-  const scenery = rest.slice(0, Math.min(20, rest.length)).map((slot, index) => ({
-    key: `${monthKey}-${slot.col}-${slot.row}-${index}`,
-    col: slot.col,
-    row: slot.row,
-    kind: sceneryKinds[index % sceneryKinds.length]
-  }));
+  const scenery = empties
+    .filter(() => rng() > 0.35)
+    .slice(0, Math.min(10, empties.length))
+    .map((slot, index) => ({
+      key: `${monthKey}-${slot.col}-${slot.row}-${index}`,
+      col: slot.col,
+      row: slot.row,
+      kind: sceneryKinds[index % sceneryKinds.length]
+    }));
 
   return {
     plots,
@@ -131,7 +146,7 @@ export const createTownLayout = (monthKey: string, dayCount: number): TownLayout
     slot: SLOT,
     mapWidth: GRID_COLS * SLOT + PADDING * 2,
     mapHeight: GRID_ROWS * SLOT + PADDING * 2,
-    roadCols: ROAD_COLS,
-    roadRows: ROAD_ROWS
+    roadCols: roadColumns(),
+    roadRows: roadRows()
   };
 };

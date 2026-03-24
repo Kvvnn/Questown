@@ -19,9 +19,15 @@ const sectionDescription: Record<QuestType, string> = {
   sub: "미래 확장 · 성장 축적"
 };
 
-const sectionOrder: QuestType[] = ["daily", "main", "sub"];
+const sectionOrder: QuestType[] = ["main", "daily", "sub"];
 
 const upbeatMessages = ["좋아, +1 Floor!", "Quest Complete!", "오늘 town이 자라고 있어요"];
+
+const questTypeSelectorActiveClass: Record<QuestType, string> = {
+  daily: "bg-gradient-to-r from-blue-500 to-cyan-500 text-white ring-2 ring-blue-200 shadow-[0_6px_0_rgba(59,130,246,0.22)]",
+  main: "bg-gradient-to-r from-indigo-600 to-purple-600 text-white ring-2 ring-purple-200 shadow-[0_6px_0_rgba(99,102,241,0.28)]",
+  sub: "bg-gradient-to-r from-emerald-500 to-teal-500 text-white ring-2 ring-emerald-200 shadow-[0_6px_0_rgba(16,185,129,0.24)]"
+};
 
 const getRoofFeedback = (completionRate: number) => {
   if (completionRate >= 0.8) return "🏆 High Roof! 오늘 하루 정말 잘 마무리했어요.";
@@ -39,6 +45,7 @@ export function TodayView() {
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const buildingPanelRef = useRef<HTMLDivElement | null>(null);
   const eventTimeoutRefs = useRef<number[]>([]);
   const toastTimeoutRefs = useRef<number[]>([]);
   const initializedRef = useRef(false);
@@ -101,6 +108,10 @@ export function TodayView() {
   const clearEventQueue = useCallback(() => {
     eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
     eventTimeoutRefs.current = [];
+  }, []);
+
+  const scrollToBuilding = useCallback(() => {
+    buildingPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, []);
 
   const pushToast = useCallback((text: string, tone: RewardToastItem["tone"] = "info") => {
@@ -223,6 +234,16 @@ export function TodayView() {
     setDailyGoal(Number(e.target.value));
   };
 
+  const onFinalizeDay = () => {
+    finalizeCurrentDay();
+    scrollToBuilding();
+  };
+
+  const onUnfinalizeDay = () => {
+    unfinalizeCurrentDay();
+    scrollToBuilding();
+  };
+
   const onBackupExport = () => {
     const data = exportBackup();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -259,12 +280,16 @@ export function TodayView() {
     return (
       <section
         key={type}
-        className={`rounded-2xl border border-white/70 p-3 ${isMain ? "bg-purple-50/85 shadow" : "bg-white/70"}`}
+        className={`rounded-2xl border p-3 ${
+          isMain
+            ? "border-purple-200 bg-gradient-to-br from-purple-50 via-white to-indigo-50 shadow-[0_10px_20px_rgba(99,102,241,0.18)]"
+            : "border-white/70 bg-white/75"
+        }`}
       >
         <div className="mb-2 flex items-center justify-between">
           <div>
             <h4 className="text-sm font-black text-slate-800">
-              {visual.icon} {questTypeLabel[type]}
+              {visual.icon} {questTypeLabel[type]} {isMain ? <span className="ml-1 text-[11px] text-purple-600">(핵심)</span> : null}
             </h4>
             <p className="text-xs text-slate-500">{sectionDescription[type]}</p>
           </div>
@@ -285,9 +310,15 @@ export function TodayView() {
                   checked={quest.completed}
                   disabled={record.isFinalized}
                   onChange={() => {
+                    const wasCompleted = quest.completed;
                     const result = toggleQuest(quest.id);
-                    if (!result.ok) setMessage(result.reason ?? "수정할 수 없어요.");
-                    else setMessage(null);
+                    if (!result.ok) {
+                      setMessage(result.reason ?? "수정할 수 없어요.");
+                      return;
+                    }
+
+                    setMessage(null);
+                    if (!wasCompleted) scrollToBuilding();
                   }}
                   className="h-5 w-5"
                 />
@@ -318,7 +349,8 @@ export function TodayView() {
     <div className="space-y-4" id="today-panel-content">
       <RewardToasts toasts={toasts} />
 
-      <Card className="relative overflow-hidden" aria-labelledby="today-title">
+      <div ref={buildingPanelRef} className="sticky top-2 z-20">
+        <Card className="relative overflow-hidden" aria-labelledby="today-title">
         <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
 
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -368,19 +400,20 @@ export function TodayView() {
         <div className="mt-3 grid grid-cols-2 gap-2">
           <Button
             className="min-h-11 bg-quest-primary text-white"
-            onClick={finalizeCurrentDay}
+            onClick={onFinalizeDay}
             disabled={record.isFinalized}
           >
             오늘 마감
           </Button>
-          <Button className="min-h-11 bg-slate-100" onClick={unfinalizeCurrentDay} disabled={!record.isFinalized}>
+          <Button className="min-h-11 bg-slate-100" onClick={onUnfinalizeDay} disabled={!record.isFinalized}>
             마감 해제
           </Button>
           <Button className="col-span-2 min-h-11 bg-quest-accent text-slate-900" onClick={goNextDayForDev}>
             다음 날로 넘기기 (DEV)
           </Button>
         </div>
-      </Card>
+        </Card>
+      </div>
 
       <Card>
         <h3 className="mb-2 text-base font-bold">퀘스트 추가</h3>
@@ -393,10 +426,11 @@ export function TodayView() {
                 <button
                   key={type}
                   type="button"
+                  aria-pressed={active}
                   onClick={() => setSelectedType(type)}
                   className={`min-h-11 rounded-xl border px-2 py-2 text-sm font-bold transition ${
                     active
-                      ? `${visual.badgeClass} border-transparent`
+                      ? `${questTypeSelectorActiveClass[type]} border-transparent`
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                   }`}
                 >
@@ -405,6 +439,10 @@ export function TodayView() {
               );
             })}
           </div>
+
+          <p className="text-xs font-semibold text-slate-600">
+            현재 선택: {questTypeLabel[selectedType]} · {sectionDescription[selectedType]}
+          </p>
 
           <div className="flex gap-2">
             <input

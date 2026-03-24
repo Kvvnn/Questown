@@ -10,19 +10,22 @@ describe("town map layout", () => {
     expect(unique.size).toBe(31);
   });
 
-  it("is deterministic for same month", () => {
-    const a = createTownLayout("2026-05", 31);
-    const b = createTownLayout("2026-05", 31);
+  it("follows calendar-like weekday placement", () => {
+    const layout = createTownLayout("2026-06", 30); // 2026-06-01 is Monday in Asia/Seoul
+    const day1 = layout.plots.find((plot) => plot.day === 1);
+    const day7 = layout.plots.find((plot) => plot.day === 7);
+    const day8 = layout.plots.find((plot) => plot.day === 8);
 
-    expect(a.plots.map((p) => `${p.day}:${p.col}-${p.row}`)).toEqual(
-      b.plots.map((p) => `${p.day}:${p.col}-${p.row}`)
-    );
+    expect(day1).toMatchObject({ row: 0, col: 1 });
+    expect(day7).toMatchObject({ row: 1, col: 0 });
+    expect(day8).toMatchObject({ row: 1, col: 1 });
   });
 
-  it("changes layout across months", () => {
-    const a = createTownLayout("2026-05", 31);
-    const b = createTownLayout("2026-06", 30);
-
-    expect(a.plots[0]?.col).not.toBe(b.plots[0]?.col);
+  it("keeps map dimensions and roads stable", () => {
+    const layout = createTownLayout("2026-09", 30);
+    expect(layout.cols).toBe(7);
+    expect(layout.rows).toBe(6);
+    expect(layout.roadCols.length).toBe(6);
+    expect(layout.roadRows.length).toBe(5);
   });
 });
