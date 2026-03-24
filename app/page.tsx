@@ -6,11 +6,19 @@ import { Button, Card } from "@/components/ui";
 import { useQuestownStore } from "@/store/questown-store";
 
 const TodayView = dynamic(() => import("@/components/today-view").then((mod) => mod.TodayView), {
-  loading: () => <Card className="text-sm text-slate-500">Today 화면 로딩 중...</Card>
+  loading: () => (
+    <Card role="status" aria-live="polite" className="text-sm text-slate-500">
+      Today 화면 로딩 중...
+    </Card>
+  )
 });
 
 const MonthlyTownView = dynamic(() => import("@/components/monthly-town-view").then((mod) => mod.MonthlyTownView), {
-  loading: () => <Card className="text-sm text-slate-500">Town scene 로딩 중...</Card>
+  loading: () => (
+    <Card role="status" aria-live="polite" className="text-sm text-slate-500">
+      Town scene 로딩 중...
+    </Card>
+  )
 });
 
 export default function HomePage() {
