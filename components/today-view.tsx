@@ -506,6 +506,9 @@ export function TodayView() {
                       className="min-h-8 bg-quest-danger px-2 py-1 text-xs text-white"
                       disabled={record.isFinalized}
                       onClick={() => {
+                        const confirmed = window.confirm(`'${quest.title}' 퀘스트를 삭제할까요?`);
+                        if (!confirmed) return;
+
                         const result = deleteQuest(quest.id);
                         if (!result.ok) setMessage(result.reason ?? "삭제할 수 없어요.");
                         else setMessage(null);
