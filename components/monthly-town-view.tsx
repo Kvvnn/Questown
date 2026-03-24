@@ -9,7 +9,7 @@ import { getDaysInMonth } from "@/domain/date";
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getDominantQuestType, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
 import { createTownLayout, TownLayout, TownPlot } from "@/domain/town-map";
-import { moveDateInMonth, TownDirection } from "@/domain/town-navigation";
+import { getPreferredTownDate, moveDateInMonth, TownDirection } from "@/domain/town-navigation";
 import { DailyRecord, QuestType } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
 
@@ -206,24 +206,25 @@ export function MonthlyTownView() {
     setCameraNudge({ x: 0, y: 0 });
   }, [selectedMonth]);
 
+  const activeSelectedDate = useMemo(
+    () =>
+      getPreferredTownDate({
+        monthKey: selectedMonth,
+        dayCount,
+        currentDate: currentDateKey,
+        selectedDate: selectedDateInTown,
+        availableDates: Object.keys(recordsByDate)
+      }),
+    [currentDateKey, dayCount, recordsByDate, selectedDateInTown, selectedMonth]
+  );
+
   useEffect(() => {
-    const validSelection =
-      selectedDateInTown &&
-      selectedDateInTown.startsWith(selectedMonth) &&
-      layout.plots.some((plot) => plot.date === selectedDateInTown);
+    if (selectedDateInTown === activeSelectedDate) return;
+    selectDateInTown(activeSelectedDate);
+  }, [activeSelectedDate, selectDateInTown, selectedDateInTown]);
 
-    if (validSelection) return;
-
-    const preferred =
-      layout.plots.find((plot) => plot.date === currentDateKey)?.date ??
-      layout.plots.find((plot) => recordsByDate[plot.date])?.date ??
-      layout.plots[0]?.date;
-
-    if (preferred) selectDateInTown(preferred);
-  }, [currentDateKey, layout.plots, recordsByDate, selectDateInTown, selectedDateInTown, selectedMonth]);
-
-  const selectedPlot = layout.plots.find((plot) => plot.date === selectedDateInTown);
-  const selectedRecord = selectedDateInTown ? recordsByDate[selectedDateInTown] : undefined;
+  const selectedPlot = layout.plots.find((plot) => plot.date === activeSelectedDate);
+  const selectedRecord = recordsByDate[activeSelectedDate];
 
   const reducedMotion = !!useReducedMotion();
   const baseCamera = useMemo(() => getCameraTarget(selectedPlot, layout, reducedMotion), [layout, reducedMotion, selectedPlot]);
@@ -288,9 +289,9 @@ export function MonthlyTownView() {
       if (!direction) return;
 
       event.preventDefault();
-      moveSelection(selectedDateInTown, direction);
+      moveSelection(activeSelectedDate, direction);
     },
-    [moveSelection, selectedDateInTown]
+    [activeSelectedDate, moveSelection]
   );
 
   return (
@@ -432,7 +433,7 @@ export function MonthlyTownView() {
                 plot={plot}
                 layout={layout}
                 record={recordsByDate[plot.date]}
-                selected={selectedDateInTown === plot.date}
+                selected={activeSelectedDate === plot.date}
                 reducedMotion={reducedMotion}
                 onSelect={selectDateInTown}
                 onNavigate={(currentDate, direction) => moveSelection(currentDate, direction, true)}
@@ -459,11 +460,11 @@ export function MonthlyTownView() {
           </span>
         ) : null}
 
-        {!selectedDateInTown ? (
+        {!activeSelectedDate ? (
           <p className="text-sm text-slate-500">타운에서 건물을 선택하면 상세를 보여줍니다.</p>
         ) : !selectedRecord ? (
           <div className="space-y-1 text-sm text-slate-600">
-            <p>날짜: {selectedDateInTown}</p>
+            <p>날짜: {activeSelectedDate}</p>
             <p>아직 기록이 없어요. 오늘 퀘스트를 완료해서 건물을 세워보세요.</p>
           </div>
         ) : (

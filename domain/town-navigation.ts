@@ -10,6 +10,35 @@ export const getDayFromDate = (date: string | undefined, monthKey: string): numb
 
 export const toDateFromDay = (monthKey: string, day: number) => `${monthKey}-${String(day).padStart(2, "0")}`;
 
+export const getPreferredTownDate = ({
+  monthKey,
+  dayCount,
+  currentDate,
+  selectedDate,
+  availableDates = []
+}: {
+  monthKey: string;
+  dayCount: number;
+  currentDate?: string;
+  selectedDate?: string;
+  availableDates?: string[];
+}) => {
+  const selectedDay = getDayFromDate(selectedDate, monthKey);
+  if (selectedDay && selectedDay <= dayCount) return toDateFromDay(monthKey, selectedDay);
+
+  const currentDay = getDayFromDate(currentDate, monthKey);
+  if (currentDay && currentDay <= dayCount) return toDateFromDay(monthKey, currentDay);
+
+  const recordedDate = availableDates
+    .filter((date) => {
+      const day = getDayFromDate(date, monthKey);
+      return day !== null && day <= dayCount;
+    })
+    .sort()[0];
+
+  return recordedDate ?? toDateFromDay(monthKey, 1);
+};
+
 const deltaByDirection: Record<Exclude<TownDirection, "home" | "end">, number> = {
   left: -1,
   right: 1,

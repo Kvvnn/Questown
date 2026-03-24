@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
-import { addDays, addMonths, ensureDailyRecord, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
+import { addDays, addMonths, ensureDailyRecord, getDaysInMonth, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
 import { getBlockedDependencyIds, getCompletedDependentIds, normalizeQuestPriority } from "@/domain/execution";
 import { getQuestCounts } from "@/domain/quest";
 import {
@@ -13,6 +13,7 @@ import {
   mergeGeneratedQuests,
   normalizeRecurrencePattern
 } from "@/domain/recurrence";
+import { getPreferredTownDate } from "@/domain/town-navigation";
 import {
   AppBackupData,
   DailyRecord,
@@ -216,6 +217,20 @@ const normalizeRecordsByDate = (recordsByDate?: Record<string, LegacyRecordLike>
 
 const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) =>
   recordsByDate[dateKey] ?? ensureDailyRecord(dateKey);
+
+const resolveSelectedTownDate = (
+  selectedMonth: string,
+  currentDateKey: string,
+  selectedDateInTown: string | undefined,
+  recordsByDate: Record<string, DailyRecord>
+) =>
+  getPreferredTownDate({
+    monthKey: selectedMonth,
+    dayCount: getDaysInMonth(selectedMonth),
+    currentDate: currentDateKey,
+    selectedDate: selectedDateInTown,
+    availableDates: Object.keys(recordsByDate)
+  });
 
 const prepareNextDayRecord = (fromRecord: DailyRecord, targetRecord: DailyRecord, targetDateKey: string) => {
   const generated = fromRecord.quests.flatMap((quest) => {
@@ -539,11 +554,33 @@ export const useQuestownStore = create<QuestownState>()(
             ...state.recordsByDate,
             [todayKey]: finalizedToday,
             [nextKey]: nextPrepared
-          }
+          },
+          selectedDateInTown: resolveSelectedTownDate(
+            monthKeyFromDateKey(nextKey),
+            nextKey,
+            state.selectedDateInTown,
+            {
+              ...state.recordsByDate,
+              [todayKey]: finalizedToday,
+              [nextKey]: nextPrepared
+            }
+          )
         }));
       },
 
-      moveMonth: (delta) => set((state) => ({ selectedMonth: addMonths(state.selectedMonth, delta) })),
+      moveMonth: (delta) =>
+        set((state) => {
+          const nextMonth = addMonths(state.selectedMonth, delta);
+          return {
+            selectedMonth: nextMonth,
+            selectedDateInTown: resolveSelectedTownDate(
+              nextMonth,
+              state.currentDateKey,
+              state.selectedDateInTown,
+              state.recordsByDate
+            )
+          };
+        }),
       selectDateInTown: (date) => set({ selectedDateInTown: date }),
 
       hydrateToday: () => {
@@ -552,22 +589,39 @@ export const useQuestownStore = create<QuestownState>()(
 
         if (activeDateKey < actualTodayKey) {
           const rolled = rollForwardRecords(get().recordsByDate, activeDateKey, actualTodayKey);
+          const selectedMonth = toMonthKey();
           set({
             currentDateKey: actualTodayKey,
-            selectedMonth: toMonthKey(),
-            recordsByDate: rolled
+            selectedMonth,
+            recordsByDate: rolled,
+            selectedDateInTown: resolveSelectedTownDate(
+              selectedMonth,
+              actualTodayKey,
+              get().selectedDateInTown,
+              rolled
+            )
           });
           return;
         }
 
         const current = getRecord(get().recordsByDate, activeDateKey);
+        const selectedMonth = monthKeyFromDateKey(activeDateKey);
         set((state) => ({
           currentDateKey: activeDateKey,
-          selectedMonth: monthKeyFromDateKey(activeDateKey),
+          selectedMonth,
           recordsByDate: {
             ...state.recordsByDate,
             [activeDateKey]: recalc(current, current.isFinalized)
-          }
+          },
+          selectedDateInTown: resolveSelectedTownDate(
+            selectedMonth,
+            activeDateKey,
+            state.selectedDateInTown,
+            {
+              ...state.recordsByDate,
+              [activeDateKey]: recalc(current, current.isFinalized)
+            }
+          )
         }));
       },
 
@@ -578,11 +632,18 @@ export const useQuestownStore = create<QuestownState>()(
         if (currentKey >= todayKey) return;
 
         const rolled = rollForwardRecords(get().recordsByDate, currentKey, todayKey);
+        const selectedMonth = monthKeyFromDateKey(todayKey);
 
         set({
           currentDateKey: todayKey,
-          selectedMonth: monthKeyFromDateKey(todayKey),
-          recordsByDate: rolled
+          selectedMonth,
+          recordsByDate: rolled,
+          selectedDateInTown: resolveSelectedTownDate(
+            selectedMonth,
+            todayKey,
+            get().selectedDateInTown,
+            rolled
+          )
         });
       },
 
@@ -605,13 +666,15 @@ export const useQuestownStore = create<QuestownState>()(
 
         const nextDate = isDateKey(data.state.currentDateKey) ? data.state.currentDateKey : toDateKey();
         const normalizedRecords = normalizeRecordsByDate(data.state.recordsByDate as Record<string, LegacyRecordLike>);
+        const selectedMonth = isMonthKey(data.state.selectedMonth) ? data.state.selectedMonth : monthKeyFromDateKey(nextDate);
 
         set({
           currentDateKey: nextDate,
-          selectedMonth: isMonthKey(data.state.selectedMonth) ? data.state.selectedMonth : monthKeyFromDateKey(nextDate),
-          dailyGoal: data.state.dailyGoal || 3,
+          selectedMonth,
+          dailyGoal: normalizePositiveInt((data.state as { dailyGoal?: number }).dailyGoal, 3, 1, 10),
           weeklyMainTarget: normalizePositiveInt((data.state as { weeklyMainTarget?: number }).weeklyMainTarget, 10, 1, 50),
-          recordsByDate: normalizedRecords
+          recordsByDate: normalizedRecords,
+          selectedDateInTown: resolveSelectedTownDate(selectedMonth, nextDate, undefined, normalizedRecords)
         });
 
         return { ok: true };
@@ -629,15 +692,17 @@ export const useQuestownStore = create<QuestownState>()(
 
         const currentDateKey = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
         const recordsByDate = normalizeRecordsByDate(state.recordsByDate);
+        const selectedMonth = isMonthKey(state.selectedMonth) ? state.selectedMonth : monthKeyFromDateKey(currentDateKey);
+        const selectedDateInTown = isDateKey(state.selectedDateInTown) ? state.selectedDateInTown : undefined;
 
         return {
           currentTab: state.currentTab ?? "today",
           currentDateKey,
-          selectedMonth: isMonthKey(state.selectedMonth) ? state.selectedMonth : monthKeyFromDateKey(currentDateKey),
-          dailyGoal: state.dailyGoal ?? 3,
+          selectedMonth,
+          dailyGoal: normalizePositiveInt(state.dailyGoal, 3, 1, 10),
           weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
           recordsByDate,
-          selectedDateInTown: isDateKey(state.selectedDateInTown) ? state.selectedDateInTown : undefined
+          selectedDateInTown: resolveSelectedTownDate(selectedMonth, currentDateKey, selectedDateInTown, recordsByDate)
         } as QuestownState;
       }
     }

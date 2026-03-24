@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDayFromDate, moveDateInMonth, toDateFromDay } from "./town-navigation";
+import { getDayFromDate, getPreferredTownDate, moveDateInMonth, toDateFromDay } from "./town-navigation";
 
 describe("town navigation", () => {
   it("extracts day only when month matches", () => {
@@ -18,5 +18,49 @@ describe("town navigation", () => {
     expect(moveDateInMonth(undefined, "2026-03", 31, "home")).toBe("2026-03-01");
     expect(moveDateInMonth(undefined, "2026-03", 31, "end")).toBe("2026-03-31");
     expect(toDateFromDay("2026-03", 5)).toBe("2026-03-05");
+  });
+
+  it("prefers a valid selected date before other fallbacks", () => {
+    expect(
+      getPreferredTownDate({
+        monthKey: "2026-03",
+        dayCount: 31,
+        currentDate: "2026-03-14",
+        selectedDate: "2026-03-20",
+        availableDates: ["2026-03-03", "2026-03-08"]
+      })
+    ).toBe("2026-03-20");
+  });
+
+  it("falls back to the current date, then the first recorded date, then day one", () => {
+    expect(
+      getPreferredTownDate({
+        monthKey: "2026-03",
+        dayCount: 31,
+        currentDate: "2026-03-14",
+        selectedDate: "2026-02-20",
+        availableDates: ["2026-03-03", "2026-03-08"]
+      })
+    ).toBe("2026-03-14");
+
+    expect(
+      getPreferredTownDate({
+        monthKey: "2026-03",
+        dayCount: 31,
+        currentDate: "2026-04-14",
+        selectedDate: "2026-02-20",
+        availableDates: ["2026-03-08", "2026-03-03"]
+      })
+    ).toBe("2026-03-03");
+
+    expect(
+      getPreferredTownDate({
+        monthKey: "2026-03",
+        dayCount: 31,
+        currentDate: "2026-04-14",
+        selectedDate: "2026-02-20",
+        availableDates: []
+      })
+    ).toBe("2026-03-01");
   });
 });
