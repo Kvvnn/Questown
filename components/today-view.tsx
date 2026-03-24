@@ -325,7 +325,7 @@ export function TodayView() {
   };
 
   const onCarryOverLimitChange = (e: ChangeEvent<HTMLInputElement>) => {
-    const next = Math.max(1, Math.min(30, Math.round(Number(e.target.value) || 1)));
+    const next = Math.max(1, Math.min(14, Math.round(Number(e.target.value) || 1)));
     setCarryOverLimit(next);
   };
 
