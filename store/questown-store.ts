@@ -11,9 +11,7 @@ import {
 } from "@/domain/execution";
 import { getQuestCounts } from "@/domain/quest";
 import {
-  createCarryOverQuestCopy,
-  createRecurringQuestCopy,
-  isRecurringDueOnDate,
+  createNextDayQuestCopies,
   mergeGeneratedQuests,
   normalizeRecurrencePattern
 } from "@/domain/recurrence";
@@ -248,18 +246,7 @@ const resolveSelectedTownDate = (
   });
 
 const prepareNextDayRecord = (fromRecord: DailyRecord, targetRecord: DailyRecord, targetDateKey: string) => {
-  const generated = fromRecord.quests.flatMap((quest) => {
-    const items: QuestItem[] = [];
-
-    const carryOver = createCarryOverQuestCopy(quest);
-    if (carryOver) items.push(carryOver);
-
-    if (isRecurringDueOnDate(quest, targetDateKey)) {
-      items.push(createRecurringQuestCopy(quest, targetDateKey));
-    }
-
-    return items;
-  });
+  const generated = fromRecord.quests.flatMap((quest) => createNextDayQuestCopies(quest, targetDateKey));
 
   const mergedQuests = mergeGeneratedQuests(targetRecord.quests, generated);
 

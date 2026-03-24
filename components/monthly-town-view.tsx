@@ -289,7 +289,7 @@ export function MonthlyTownView() {
       if (!direction) return;
 
       event.preventDefault();
-      moveSelection(activeSelectedDate, direction);
+      moveSelection(activeSelectedDate, direction, true);
     },
     [activeSelectedDate, moveSelection]
   );

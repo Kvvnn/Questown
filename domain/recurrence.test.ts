@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createNextDayQuestCopies,
   canCarryOver,
   createCarryOverQuestCopy,
   createRecurringQuestCopy,
@@ -102,5 +103,13 @@ describe("recurrence utils", () => {
 
     const merged = mergeGeneratedQuests(existing, generated);
     expect(merged).toHaveLength(1);
+  });
+
+  it("keeps recurring carry-over quests to a single next-day copy", () => {
+    const generated = createNextDayQuestCopies(baseQuest, "2026-03-25");
+
+    expect(generated).toHaveLength(1);
+    expect(generated[0]?.carryOverCount).toBe(1);
+    expect(generated[0]?.recurrencePattern).toBe("daily");
   });
 });

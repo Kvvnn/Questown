@@ -73,6 +73,7 @@ export function TodayView() {
   const [selectedDependencyQuestId, setSelectedDependencyQuestId] = useState<string>("");
   const [focusMode, setFocusMode] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>("none");
+  const [isRecurrenceAutoSelected, setIsRecurrenceAutoSelected] = useState(false);
   const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(2);
   const [carryOverEnabled, setCarryOverEnabled] = useState(true);
   const [carryOverLimit, setCarryOverLimit] = useState(3);
@@ -308,6 +309,10 @@ export function TodayView() {
 
     if (type === "daily" && recurrencePattern === "none") {
       setRecurrencePattern("daily");
+      setIsRecurrenceAutoSelected(true);
+    } else if (type !== "daily" && recurrencePattern === "daily" && isRecurrenceAutoSelected) {
+      setRecurrencePattern("none");
+      setIsRecurrenceAutoSelected(false);
     }
 
     if (type === "main" && !carryOverEnabled) {
@@ -360,6 +365,7 @@ export function TodayView() {
   const onRecurrencePatternChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const value = e.target.value as RecurrencePattern;
     setRecurrencePattern(value);
+    setIsRecurrenceAutoSelected(false);
     if (value !== "interval") {
       setRecurrenceIntervalDays(2);
     }

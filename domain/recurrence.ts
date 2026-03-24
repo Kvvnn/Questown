@@ -114,6 +114,18 @@ export const createCarryOverQuestCopy = (quest: QuestItem): QuestItem | null => 
   };
 };
 
+export const createNextDayQuestCopies = (quest: QuestItem, targetDateKey: string) => {
+  const carryOverCopy = createCarryOverQuestCopy(quest);
+  const recurringCopy = isRecurringDueOnDate(quest, targetDateKey) ? createRecurringQuestCopy(quest, targetDateKey) : null;
+
+  // A recurring quest that also carries over should still surface as a single next-day quest.
+  if (carryOverCopy && recurringCopy) {
+    return [carryOverCopy];
+  }
+
+  return [carryOverCopy, recurringCopy].filter((item): item is QuestItem => Boolean(item));
+};
+
 const toTitleKey = (quest: Pick<QuestItem, "title" | "type">) => `${quest.type}::${quest.title.trim().toLowerCase()}`;
 
 export const mergeGeneratedQuests = (existing: QuestItem[], generated: QuestItem[]) => {
