@@ -19,10 +19,9 @@ const toParts = (date: Date) => {
   return { year: pick("year"), month: pick("month"), day: pick("day") };
 };
 
-const parseDateKey = (dateKey: string) => {
+const getDateKeyParts = (dateKey: string) => {
   const match = DATE_KEY_PARTS.exec(dateKey);
-  if (!match) throw new Error(`Invalid date key: ${dateKey}`);
-
+  if (!match) return null;
   return {
     year: Number(match[1]),
     month: Number(match[2]),
@@ -30,14 +29,56 @@ const parseDateKey = (dateKey: string) => {
   };
 };
 
-const parseMonthKey = (monthKey: string) => {
+const getMonthKeyParts = (monthKey: string) => {
   const match = MONTH_KEY_PARTS.exec(monthKey);
-  if (!match) throw new Error(`Invalid month key: ${monthKey}`);
-
+  if (!match) return null;
   return {
     year: Number(match[1]),
     month: Number(match[2])
   };
+};
+
+const hasValidUtcDate = (year: number, month: number, day: number) => {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day
+  );
+};
+
+export const isDateKey = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const parts = getDateKeyParts(value);
+  if (!parts) return false;
+  return hasValidUtcDate(parts.year, parts.month, parts.day);
+};
+
+export const isMonthKey = (value: unknown): value is string => {
+  if (typeof value !== "string") return false;
+  const parts = getMonthKeyParts(value);
+  if (!parts) return false;
+  return parts.month >= 1 && parts.month <= 12;
+};
+
+const parseDateKey = (dateKey: string) => {
+  const parts = getDateKeyParts(dateKey);
+  if (!parts || !hasValidUtcDate(parts.year, parts.month, parts.day)) {
+    throw new Error(`Invalid date key: ${dateKey}`);
+  }
+
+  return parts;
+};
+
+const parseMonthKey = (monthKey: string) => {
+  const parts = getMonthKeyParts(monthKey);
+  if (!parts || parts.month < 1 || parts.month > 12) {
+    throw new Error(`Invalid month key: ${monthKey}`);
+  }
+
+  return parts;
 };
 
 const formatUtcDateKey = (date: Date) => `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;

@@ -39,6 +39,28 @@ export const getBlockedDependencyIds = (quest: QuestItem, questMap: Map<string, 
   });
 };
 
+export const getCompletedDependentIds = (questId: string, questMap: Map<string, QuestItem>) => {
+  const visited = new Set<string>([questId]);
+  const queue = [questId];
+  const completedDependents: string[] = [];
+
+  while (queue.length > 0) {
+    const currentId = queue.shift();
+    if (!currentId) continue;
+
+    questMap.forEach((quest) => {
+      if (visited.has(quest.id)) return;
+      if (!(quest.dependencyQuestIds ?? []).includes(currentId)) return;
+
+      visited.add(quest.id);
+      queue.push(quest.id);
+      if (quest.completed) completedDependents.push(quest.id);
+    });
+  }
+
+  return completedDependents;
+};
+
 export const isQuestBlocked = (quest: QuestItem, questMap: Map<string, QuestItem>) => {
   return getBlockedDependencyIds(quest, questMap).length > 0;
 };

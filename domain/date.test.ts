@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, addMonths, getDaysInMonth } from "./date";
+import { addDays, addMonths, getDaysInMonth, isDateKey, isMonthKey } from "./date";
 
 const withTimeZone = (timeZone: string, run: () => void) => {
   const previous = process.env.TZ;
@@ -44,5 +44,14 @@ describe("date utils", () => {
       expect(addDays("2026-03-08", 1)).toBe("2026-03-09");
       expect(addDays("2026-11-02", -1)).toBe("2026-11-01");
     });
+  });
+
+  it("validates imported date and month keys", () => {
+    expect(isDateKey("2026-03-24")).toBe(true);
+    expect(isDateKey("2026-02-29")).toBe(false);
+    expect(isDateKey("not-a-date")).toBe(false);
+    expect(isMonthKey("2026-03")).toBe(true);
+    expect(isMonthKey("2026-13")).toBe(false);
+    expect(isMonthKey("2026-3")).toBe(false);
   });
 });

@@ -3,8 +3,8 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
-import { addDays, addMonths, ensureDailyRecord, toDateKey, toMonthKey } from "@/domain/date";
-import { getBlockedDependencyIds, normalizeQuestPriority } from "@/domain/execution";
+import { addDays, addMonths, ensureDailyRecord, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
+import { getBlockedDependencyIds, getCompletedDependentIds, normalizeQuestPriority } from "@/domain/execution";
 import { getQuestCounts } from "@/domain/quest";
 import {
   createCarryOverQuestCopy,
@@ -24,6 +24,7 @@ import {
 } from "@/domain/types";
 
 const MAX_QUEST_TITLE_LENGTH = 80;
+const monthKeyFromDateKey = (dateKey: string) => dateKey.slice(0, 7);
 
 interface LegacyQuestLike {
   id?: string;
@@ -198,13 +199,20 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
   return recalc(
     {
       ...base,
-      date: raw.date ?? dateKey,
+      date: isDateKey(raw.date) ? raw.date : dateKey,
       quests,
       isFinalized: Boolean(raw.isFinalized)
     },
     Boolean(raw.isFinalized)
   );
 };
+
+const normalizeRecordsByDate = (recordsByDate?: Record<string, LegacyRecordLike>) =>
+  Object.entries(recordsByDate ?? {}).reduce<Record<string, DailyRecord>>((acc, [key, value]) => {
+    if (!isDateKey(key)) return acc;
+    acc[key] = normalizeRecord(key, value);
+    return acc;
+  }, {});
 
 const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) =>
   recordsByDate[dateKey] ?? ensureDailyRecord(dateKey);
@@ -426,6 +434,18 @@ export const useQuestownStore = create<QuestownState>()(
           }
         }
 
+        if (target.completed) {
+          const completedDependentIds = getCompletedDependentIds(questId, questMap);
+          if (completedDependentIds.length > 0) {
+            const titles = completedDependentIds
+              .map((id) => questMap.get(id)?.title)
+              .filter((title): title is string => Boolean(title));
+            const preview = titles.slice(0, 2).join(", ");
+            const suffix = titles.length > 2 ? ` 외 ${titles.length - 2}개` : "";
+            return { ok: false, reason: `후행 Quest를 먼저 되돌리세요: ${preview}${suffix}` };
+          }
+        }
+
         const next = recalc(
           {
             ...today,
@@ -514,7 +534,7 @@ export const useQuestownStore = create<QuestownState>()(
 
         set((state) => ({
           currentDateKey: nextKey,
-          selectedMonth: toMonthKey(new Date(`${nextKey}T00:00:00+09:00`)),
+          selectedMonth: monthKeyFromDateKey(nextKey),
           recordsByDate: {
             ...state.recordsByDate,
             [todayKey]: finalizedToday,
@@ -543,7 +563,7 @@ export const useQuestownStore = create<QuestownState>()(
         const current = getRecord(get().recordsByDate, activeDateKey);
         set((state) => ({
           currentDateKey: activeDateKey,
-          selectedMonth: toMonthKey(new Date(`${activeDateKey}T00:00:00+09:00`)),
+          selectedMonth: monthKeyFromDateKey(activeDateKey),
           recordsByDate: {
             ...state.recordsByDate,
             [activeDateKey]: recalc(current, current.isFinalized)
@@ -561,7 +581,7 @@ export const useQuestownStore = create<QuestownState>()(
 
         set({
           currentDateKey: todayKey,
-          selectedMonth: toMonthKey(),
+          selectedMonth: monthKeyFromDateKey(todayKey),
           recordsByDate: rolled
         });
       },
@@ -579,20 +599,16 @@ export const useQuestownStore = create<QuestownState>()(
       }),
 
       importBackup: (data) => {
-        if (!data?.state?.recordsByDate) return { ok: false, reason: "백업 데이터 형식이 올바르지 않아요." };
+        if (!data?.state?.recordsByDate || typeof data.state.recordsByDate !== "object") {
+          return { ok: false, reason: "백업 데이터 형식이 올바르지 않아요." };
+        }
 
-        const nextDate = data.state.currentDateKey || toDateKey();
-        const normalizedRecords = Object.entries(data.state.recordsByDate).reduce<Record<string, DailyRecord>>(
-          (acc, [key, value]) => {
-            acc[key] = normalizeRecord(key, value as LegacyRecordLike);
-            return acc;
-          },
-          {}
-        );
+        const nextDate = isDateKey(data.state.currentDateKey) ? data.state.currentDateKey : toDateKey();
+        const normalizedRecords = normalizeRecordsByDate(data.state.recordsByDate as Record<string, LegacyRecordLike>);
 
         set({
           currentDateKey: nextDate,
-          selectedMonth: data.state.selectedMonth || toMonthKey(new Date(`${nextDate}T00:00:00+09:00`)),
+          selectedMonth: isMonthKey(data.state.selectedMonth) ? data.state.selectedMonth : monthKeyFromDateKey(nextDate),
           dailyGoal: data.state.dailyGoal || 3,
           weeklyMainTarget: normalizePositiveInt((data.state as { weeklyMainTarget?: number }).weeklyMainTarget, 10, 1, 50),
           recordsByDate: normalizedRecords
@@ -611,22 +627,17 @@ export const useQuestownStore = create<QuestownState>()(
           weeklyMainTarget?: number;
         };
 
-        const recordsByDate = Object.entries(state.recordsByDate ?? {}).reduce<Record<string, DailyRecord>>(
-          (acc, [key, value]) => {
-            acc[key] = normalizeRecord(key, value);
-            return acc;
-          },
-          {}
-        );
+        const currentDateKey = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
+        const recordsByDate = normalizeRecordsByDate(state.recordsByDate);
 
         return {
           currentTab: state.currentTab ?? "today",
-          currentDateKey: state.currentDateKey ?? toDateKey(),
-          selectedMonth: state.selectedMonth ?? toMonthKey(),
+          currentDateKey,
+          selectedMonth: isMonthKey(state.selectedMonth) ? state.selectedMonth : monthKeyFromDateKey(currentDateKey),
           dailyGoal: state.dailyGoal ?? 3,
           weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
           recordsByDate,
-          selectedDateInTown: state.selectedDateInTown
+          selectedDateInTown: isDateKey(state.selectedDateInTown) ? state.selectedDateInTown : undefined
         } as QuestownState;
       }
     }

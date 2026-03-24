@@ -367,8 +367,13 @@ export function TodayView() {
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = `questown-backup-${currentDateKey}.json`;
+    anchor.style.display = "none";
+    document.body.append(anchor);
     anchor.click();
-    URL.revokeObjectURL(url);
+    window.setTimeout(() => {
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }, 0);
     setMessage("백업 파일을 저장했어요.");
   };
 

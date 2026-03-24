@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getExecutionQueue, getFocusQuestIds, getWeeklyMainProgress } from "./execution";
+import { getCompletedDependentIds, getExecutionQueue, getFocusQuestIds, getWeeklyMainProgress } from "./execution";
 import { DailyRecord, QuestItem } from "./types";
 
 const q = (overrides: Partial<QuestItem>): QuestItem => ({
@@ -47,6 +47,18 @@ describe("execution utils", () => {
     expect(focus).toContain("a");
     expect(focus).not.toContain("d");
     expect(focus.length).toBeLessThanOrEqual(3);
+  });
+
+  it("finds completed dependent quests before allowing prerequisite rollback", () => {
+    const quests = [
+      q({ id: "a", title: "A", completed: true }),
+      q({ id: "b", title: "B", completed: false, dependencyQuestIds: ["a"] }),
+      q({ id: "c", title: "C", completed: true, dependencyQuestIds: ["b"] }),
+      q({ id: "d", title: "D", completed: true, dependencyQuestIds: ["a"] })
+    ];
+
+    const questMap = new Map(quests.map((quest) => [quest.id, quest] as const));
+    expect(getCompletedDependentIds("a", questMap).sort()).toEqual(["c", "d"]);
   });
 
   it("computes weekly main progress", () => {
