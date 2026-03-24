@@ -79,6 +79,7 @@ export function TodayView() {
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
   const buildingPanelRef = useRef<HTMLDivElement | null>(null);
   const eventTimeoutRefs = useRef<number[]>([]);
   const toastTimeoutRefs = useRef<number[]>([]);
@@ -321,6 +322,7 @@ export function TodayView() {
     setTitleInput("");
     setSelectedDependencyQuestId("");
     setMessage(null);
+    titleInputRef.current?.focus();
   };
 
   const onGoalChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -704,6 +706,7 @@ export function TodayView() {
         <form onSubmit={onSubmit} className="space-y-3" aria-describedby="quest-input-hint">
           <div className="flex gap-2">
             <input
+              ref={titleInputRef}
               aria-label="새 퀘스트 입력"
               aria-invalid={isQuestTitleEmpty}
               value={titleInput}
