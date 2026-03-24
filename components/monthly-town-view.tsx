@@ -96,15 +96,15 @@ interface TownLotProps {
   onNavigate: (currentDate: string, direction: TownDirection) => void;
 }
 
-const getLotAriaLabel = (plot: TownPlot, floors: number, record?: DailyRecord, dominantType?: QuestType | null) => {
+const getLotAriaLabel = (plot: TownPlot, floorCount: number, record?: DailyRecord, dominantType?: QuestType | null) => {
   if (!record) {
-    return `${plot.date} 건물, ${floors}층, 아직 기록 없음`;
+    return `${plot.date} 건물, ${floorCount}층, 아직 기록 없음`;
   }
 
   const dominantLabel = dominantType ? `${questTypeShortLabel[dominantType]} 중심` : "타입 미정";
   const roofLabel = roofTypeLabel[getDisplayedRoofType(record.completedCount, record.roofType, record.isFinalized)];
 
-  return `${plot.date} 건물, ${floors}층, 완료 ${record.completedCount}/${record.totalCount}, ${dominantLabel}, ${roofLabel}`;
+  return `${plot.date} 건물, ${floorCount}층, 완료 ${record.completedCount}/${record.totalCount}, ${dominantLabel}, ${roofLabel}`;
 };
 
 const TownLot = memo(function TownLot({
@@ -118,7 +118,7 @@ const TownLot = memo(function TownLot({
   onNavigate
 }: TownLotProps) {
   const height = getBuildingHeight(record?.completedCount ?? 0);
-  const floors = Math.min(height, 12);
+  const floorCount = height;
   const roofType = getDisplayedRoofType(record?.completedCount ?? 0, record?.roofType ?? "none", Boolean(record?.isFinalized));
   const dominantType = getDominantQuestType(record, "completed") ?? getDominantQuestType(record, "total");
   const typeAccent = getTypeAccent(dominantType);
@@ -143,7 +143,7 @@ const TownLot = memo(function TownLot({
         event.preventDefault();
         onNavigate(plot.date, direction);
       }}
-      aria-label={getLotAriaLabel(plot, floors, record, dominantType)}
+      aria-label={getLotAriaLabel(plot, floorCount, record, dominantType)}
       aria-pressed={selected}
       aria-current={plot.date === currentDateKey ? "date" : undefined}
       className="group absolute text-left outline-none focus-visible:z-10"
@@ -191,7 +191,7 @@ const TownLot = memo(function TownLot({
 
       <div className="mt-1 flex items-center justify-between px-0.5 text-[10px] font-bold text-slate-600">
         <span>{plot.day}</span>
-        <span>{floors}F</span>
+        <span>{floorCount}F</span>
       </div>
     </button>
   );

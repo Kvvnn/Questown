@@ -94,7 +94,7 @@ export function TodayView() {
   const [selectedDependencyQuestId, setSelectedDependencyQuestId] = useState<string>("");
   const [focusMode, setFocusMode] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>("none");
-  const [isRecurrenceAutoSelected, setIsRecurrenceAutoSelected] = useState(false);
+  const [isRecurrenceAutoSelected, setIsRecurrenceAutoSelected] = useState(true);
   const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(2);
   const [carryOverEnabled, setCarryOverEnabled] = useState(true);
   const [isCarryOverAutoSelected, setIsCarryOverAutoSelected] = useState(true);
@@ -235,8 +235,8 @@ export function TodayView() {
   }, []);
 
   const scrollToBuilding = useCallback(() => {
-    buildingPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, []);
+    buildingPanelRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+  }, [reduceMotion]);
 
   const pushToast = useCallback((text: string, tone: RewardToastItem["tone"] = "info") => {
     const id = toastIdRef.current;
@@ -357,20 +357,16 @@ export function TodayView() {
     setSelectedType(type);
     setSelectedPriority(normalizeQuestPriority(undefined, type));
 
-    if (type === "daily" && recurrencePattern === "none") {
+    if (type === "daily" && recurrencePattern === "none" && isRecurrenceAutoSelected) {
       setRecurrencePattern("daily");
-      setIsRecurrenceAutoSelected(true);
     } else if (type !== "daily" && recurrencePattern === "daily" && isRecurrenceAutoSelected) {
       setRecurrencePattern("none");
-      setIsRecurrenceAutoSelected(false);
     }
 
-    if (type === "main" && !carryOverEnabled) {
+    if (type === "main" && !carryOverEnabled && isCarryOverAutoSelected) {
       setCarryOverEnabled(true);
-      setIsCarryOverAutoSelected(true);
     } else if (type !== "main" && carryOverEnabled && isCarryOverAutoSelected) {
       setCarryOverEnabled(false);
-      setIsCarryOverAutoSelected(false);
     }
   };
 
