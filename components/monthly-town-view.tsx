@@ -79,6 +79,12 @@ const getTypeAccent = (type: QuestType | null) => {
   };
 };
 
+const getTownDetailEmptyMessage = (date: string, currentDateKey: string) => {
+  if (date === currentDateKey) return "아직 기록이 없어요. 오늘 퀘스트를 완료해서 건물을 세워보세요.";
+  if (date > currentDateKey) return "이 날짜는 아직 오지 않았어요. 오늘을 쌓아 가면 여기에도 건물이 생겨요.";
+  return "이 날짜에는 아직 기록이 없어요.";
+};
+
 interface TownLotProps {
   plot: TownPlot;
   layout: TownLayout;
@@ -467,7 +473,7 @@ export function MonthlyTownView() {
         ) : !selectedRecord ? (
           <div className="space-y-1 text-sm text-slate-600">
             <p>날짜: {activeSelectedDate}</p>
-            <p>아직 기록이 없어요. 오늘 퀘스트를 완료해서 건물을 세워보세요.</p>
+            <p>{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
           </div>
         ) : (
           <div className="space-y-3 text-sm">
@@ -490,13 +496,17 @@ export function MonthlyTownView() {
               })}
             </div>
 
-            <ul className="list-disc space-y-1 pl-4">
-              {selectedRecord.quests.map((quest) => (
-                <li key={quest.id}>
-                  {quest.completed ? "✅" : "⬜"} [{questTypeShortLabel[quest.type]}] {quest.title}
-                </li>
-              ))}
-            </ul>
+            {selectedRecord.quests.length === 0 ? (
+              <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-500">등록된 퀘스트가 없어요.</p>
+            ) : (
+              <ul className="list-disc space-y-1 pl-4">
+                {selectedRecord.quests.map((quest) => (
+                  <li key={quest.id}>
+                    {quest.completed ? "✅" : "⬜"} [{questTypeShortLabel[quest.type]}] {quest.title}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
       </Card>

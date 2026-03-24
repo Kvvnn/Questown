@@ -51,6 +51,14 @@ const priorityButtonClass: Record<QuestPriority, string> = {
   p3: "bg-slate-100 text-slate-700 border-slate-200"
 };
 
+type InlineStatusTone = "info" | "success" | "error";
+
+const inlineStatusClass: Record<InlineStatusTone, string> = {
+  info: "border-sky-200 bg-sky-50 text-sky-700",
+  success: "border-emerald-200 bg-emerald-50 text-emerald-700",
+  error: "border-rose-200 bg-rose-50 text-rose-700"
+};
+
 const nextPriority: Record<QuestPriority, QuestPriority> = {
   p1: "p2",
   p2: "p3",
@@ -77,7 +85,7 @@ export function TodayView() {
   const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(2);
   const [carryOverEnabled, setCarryOverEnabled] = useState(true);
   const [carryOverLimit, setCarryOverLimit] = useState(3);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; tone: InlineStatusTone } | null>(null);
   const [toasts, setToasts] = useState<RewardToastItem[]>([]);
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
 
@@ -109,6 +117,10 @@ export function TodayView() {
 
   const reduceMotion = !!useReducedMotion();
   const showDevTools = process.env.NODE_ENV !== "production";
+
+  const showMessage = useCallback((text: string, tone: InlineStatusTone = "info") => {
+    setMessage({ text, tone });
+  }, []);
 
   const percent = Math.round(record.completionRate * 100);
   const streak = useMemo(
@@ -344,7 +356,7 @@ export function TodayView() {
 
     if (!trimmedTitle) {
       setHasTriedEmptySubmit(true);
-      setMessage("퀘스트를 입력해 주세요.");
+      showMessage("퀘스트를 입력해 주세요.", "error");
       titleInputRef.current?.focus();
       return;
     }
@@ -361,7 +373,7 @@ export function TodayView() {
     });
 
     if (!result.ok) {
-      setMessage(result.reason ?? "추가에 실패했어요.");
+      showMessage(result.reason ?? "추가에 실패했어요.", "error");
       return;
     }
 
@@ -422,7 +434,7 @@ export function TodayView() {
       anchor.remove();
       URL.revokeObjectURL(url);
     }, 0);
-    setMessage("백업 파일을 저장했어요.");
+    showMessage("백업 파일을 저장했어요.", "success");
   };
 
   const onBackupImport = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -437,10 +449,10 @@ export function TodayView() {
       if (!result.ok) {
         skipNextRewardRef.current = false;
       }
-      setMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.");
+      showMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.", result.ok ? "success" : "error");
     } catch {
       skipNextRewardRef.current = false;
-      setMessage("JSON 파일을 읽지 못했어요.");
+      showMessage("JSON 파일을 읽지 못했어요.", "error");
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -479,7 +491,7 @@ export function TodayView() {
               const wasCompleted = quest.completed;
               const result = toggleQuest(quest.id);
               if (!result.ok) {
-                setMessage(result.reason ?? "수정할 수 없어요.");
+                showMessage(result.reason ?? "수정할 수 없어요.", "error");
                 return;
               }
 
@@ -567,7 +579,7 @@ export function TodayView() {
                     disabled={record.isFinalized}
                     onClick={() => {
                       const result = updateQuestMeta(quest.id, { priority: nextPriority[priority] });
-                      if (!result.ok) setMessage(result.reason ?? "우선순위를 변경할 수 없어요.");
+                      if (!result.ok) showMessage(result.reason ?? "우선순위를 변경할 수 없어요.", "error");
                       else setMessage(null);
                     }}
                   >
@@ -580,7 +592,7 @@ export function TodayView() {
                     disabled={record.isFinalized}
                     onClick={() => {
                       const result = updateQuestMeta(quest.id, { focusPinned: !quest.focusPinned });
-                      if (!result.ok) setMessage(result.reason ?? "집중 고정을 변경할 수 없어요.");
+                      if (!result.ok) showMessage(result.reason ?? "집중 고정을 변경할 수 없어요.", "error");
                       else setMessage(null);
                     }}
                   >
@@ -597,7 +609,7 @@ export function TodayView() {
                       if (!confirmed) return;
 
                       const result = deleteQuest(quest.id);
-                      if (!result.ok) setMessage(result.reason ?? "삭제할 수 없어요.");
+                      if (!result.ok) showMessage(result.reason ?? "삭제할 수 없어요.", "error");
                       else setMessage(null);
                     }}
                   >
@@ -942,8 +954,12 @@ export function TodayView() {
         ) : null}
 
         {message ? (
-          <p role="status" aria-live="polite" className="mt-3 rounded-xl bg-slate-100 px-3 py-2 text-sm">
-            {message}
+          <p
+            role={message.tone === "error" ? "alert" : "status"}
+            aria-live={message.tone === "error" ? "assertive" : "polite"}
+            className={`mt-3 rounded-xl border px-3 py-2 text-sm font-semibold ${inlineStatusClass[message.tone]}`}
+          >
+            {message.text}
           </p>
         ) : null}
       </Card>
