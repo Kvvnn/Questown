@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { QuestAnimationEvent } from "@/domain/animation";
+import { roofTypeLabel } from "@/domain/building";
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { QuestType, RoofType } from "@/domain/types";
 
@@ -166,7 +167,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
         <div className="h-4 w-32 rounded-xl bg-slate-300/90 shadow-inner" />
         {finalized && roofType !== "none" ? (
           <span className="rounded-full border border-white/80 bg-white/80 px-2 py-1 text-xs font-bold text-slate-700 backdrop-blur">
-            Roof: {roofType.toUpperCase()}
+            지붕: {roofTypeLabel[roofType]}
           </span>
         ) : null}
       </motion.div>

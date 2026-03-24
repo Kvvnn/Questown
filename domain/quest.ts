@@ -9,15 +9,15 @@ export const emptyQuestTypeCounter = (): QuestTypeCounter => ({
 });
 
 export const questTypeLabel: Record<QuestType, string> = {
-  daily: "Daily Quest",
-  main: "Main Quest",
-  sub: "Sub Quest"
+  daily: "루틴 퀘스트",
+  main: "메인 퀘스트",
+  sub: "서브 퀘스트"
 };
 
 export const questTypeShortLabel: Record<QuestType, string> = {
-  daily: "Daily",
-  main: "Main",
-  sub: "Sub"
+  daily: "루틴",
+  main: "메인",
+  sub: "서브"
 };
 
 export const getQuestCounts = (quests: QuestItem[]) => {

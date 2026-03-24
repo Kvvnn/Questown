@@ -30,6 +30,30 @@ body {
   @apply rounded-2xl border border-white/60 bg-white/60 p-3;
 }
 
+.disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.disclosure-summary {
+  @apply flex cursor-pointer list-none items-center justify-between gap-3;
+}
+
+.disclosure-summary-inline {
+  @apply inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-600 shadow-sm;
+}
+
+.disclosure-caret {
+  @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm text-slate-500 transition-transform duration-200 ease-out;
+}
+
+.disclosure-summary-inline .disclosure-caret {
+  @apply h-5 w-5 text-[10px];
+}
+
+.disclosure[open] .disclosure-caret {
+  transform: rotate(180deg);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

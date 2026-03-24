@@ -7,6 +7,7 @@ import { CssFramerBuildingRenderer } from "@/components/animated-building";
 import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button, Card } from "@/components/ui";
 import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
+import { roofTypeLabel } from "@/domain/building";
 import {
   getExecutionQueue,
   getFocusQuestIds,
@@ -28,7 +29,7 @@ const sectionDescription: Record<QuestType, string> = {
 
 const sectionOrder: QuestType[] = ["main", "daily", "sub"];
 
-const upbeatMessages = ["좋아, +1 Floor!", "Quest Complete!", "오늘 town이 자라고 있어요"];
+const upbeatMessages = ["좋아, +1층!", "퀘스트 완료!", "오늘 타운이 자라고 있어요"];
 
 const recurrenceLabel: Record<RecurrencePattern, string> = {
   none: "반복 없음",
@@ -57,9 +58,9 @@ const nextPriority: Record<QuestPriority, QuestPriority> = {
 };
 
 const getRoofFeedback = (completionRate: number) => {
-  if (completionRate >= 0.8) return "🏆 High Roof! 오늘 하루 정말 잘 마무리했어요.";
-  if (completionRate >= 0.4) return "👍 Mid Roof! 내일 한 걸음 더 가봐요.";
-  return "🌤️ Low Roof! 그래도 오늘의 건물은 세워졌어요.";
+  if (completionRate >= 0.8) return "🏆 완성 지붕! 오늘 하루를 정말 잘 마무리했어요.";
+  if (completionRate >= 0.4) return "👍 안정 지붕! 내일 한 걸음 더 가봐요.";
+  return "🌤️ 기초 지붕! 그래도 오늘의 건물은 세워졌어요.";
 };
 
 export function TodayView() {
@@ -237,14 +238,14 @@ export function TodayView() {
     if (record.completedCount > prev.completedCount) {
       queue.push({
         type: "quest-complete",
-        text: "+1 Floor · Quest Complete",
+        text: "+1층 · 퀘스트 완료",
         tone: "success"
       });
 
       if (prev.completedCount < dailyGoal && record.completedCount >= dailyGoal) {
         queue.push({
           type: "goal-reached",
-          text: "🎯 Daily Goal Complete",
+          text: "🎯 오늘 목표 달성",
           tone: "epic"
         });
       }
@@ -469,19 +470,19 @@ export function TodayView() {
 
               {showExecutionMeta && rank ? (
                 <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
-                  Queue #{rank}
+                  순서 {rank}
                 </span>
               ) : null}
 
               {showExecutionMeta && quest.focusPinned ? (
                 <span className="rounded-full bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-bold text-fuchsia-700">
-                  Focus Pin
+                  집중 고정
                 </span>
               ) : null}
 
               {isBlocked ? (
                 <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
-                  Blocked
+                  대기
                 </span>
               ) : null}
             </div>
@@ -490,9 +491,12 @@ export function TodayView() {
               <p className="mt-1 text-[11px] font-semibold text-rose-600">선행 필요: {blockedByTitles.join(", ")}</p>
             ) : null}
 
-            <details className="mt-2">
-              <summary className="inline-flex cursor-pointer list-none items-center rounded-full border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-600 shadow-sm [&::-webkit-details-marker]:hidden">
-                ... 더보기
+            <details className="disclosure mt-2">
+              <summary className="disclosure-summary-inline">
+                <span>... 더보기</span>
+                <span aria-hidden="true" className="disclosure-caret">
+                  ▾
+                </span>
               </summary>
 
               <div className="mt-2 rounded-2xl border border-slate-200 bg-slate-50/90 p-2">
@@ -502,12 +506,12 @@ export function TodayView() {
                   </span>
                   {rank ? (
                     <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
-                      Queue #{rank}
+                      순서 {rank}
                     </span>
                   ) : null}
                   {quest.focusPinned ? (
                     <span className="rounded-full bg-fuchsia-100 px-1.5 py-0.5 text-[10px] font-bold text-fuchsia-700">
-                      Focus Pin
+                      집중 고정
                     </span>
                   ) : null}
                   {(quest.dependencyQuestIds ?? []).length > 0 ? (
@@ -537,11 +541,11 @@ export function TodayView() {
                     disabled={record.isFinalized}
                     onClick={() => {
                       const result = updateQuestMeta(quest.id, { focusPinned: !quest.focusPinned });
-                      if (!result.ok) setMessage(result.reason ?? "Focus 핀을 변경할 수 없어요.");
+                      if (!result.ok) setMessage(result.reason ?? "집중 고정을 변경할 수 없어요.");
                       else setMessage(null);
                     }}
                   >
-                    {quest.focusPinned ? "Focus 해제" : "Focus 고정"}
+                    {quest.focusPinned ? "집중 해제" : "집중 고정"}
                   </Button>
 
                   <Button
@@ -615,7 +619,7 @@ export function TodayView() {
 
           <div className="flex items-center justify-between gap-2">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Today</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">오늘</p>
               <p className="text-sm font-black text-slate-800">{record.date}</p>
             </div>
 
@@ -645,14 +649,14 @@ export function TodayView() {
 
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Building</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">빌딩 현황</p>
               <h2 id="today-title" className="text-lg font-black">
                 오늘의 건물
               </h2>
               <p className="text-xs font-semibold text-slate-600">{feedback}</p>
             </div>
             <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
-              지붕: {record.isFinalized ? record.roofType.toUpperCase() : "NONE"}
+              지붕: {record.isFinalized ? roofTypeLabel[record.roofType] : roofTypeLabel.none}
             </div>
           </div>
 
@@ -667,7 +671,7 @@ export function TodayView() {
 
           <div className="mt-4 grid grid-cols-2 gap-2 text-center text-sm" aria-live="polite">
             <div className="metric-pill">
-              🔥 Streak <AnimatedNumber value={streak} />일
+              🔥 연속 <AnimatedNumber value={streak} />일
             </div>
             <div className="metric-pill">
               🎯 목표 <AnimatedNumber value={dailyGoal} />개
@@ -683,7 +687,7 @@ export function TodayView() {
             <p className="text-xs text-slate-500">체크하면 바로 건물이 반응하고, 완료한 항목은 목록에서 빠집니다.</p>
           </div>
           <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
-            {focusMode ? `Focus ${visibleExecutionQueue.length}개` : `남은 ${executionQueue.length}개`}
+            {focusMode ? `집중 ${visibleExecutionQueue.length}개` : `남은 ${executionQueue.length}개`}
           </span>
         </div>
 
@@ -692,7 +696,7 @@ export function TodayView() {
             {record.totalCount === 0
               ? "오늘 첫 퀘스트를 아래에서 추가해 보세요."
               : focusMode
-                ? "Focus 모드 기준으로 지금 볼 퀘스트가 없어요. 실행 가이드에서 Focus를 꺼보세요."
+                ? "집중 모드 기준으로 지금 볼 퀘스트가 없어요. 실행 가이드에서 집중 모드를 꺼보세요."
                 : "오늘 등록한 퀘스트를 모두 완료했어요. 아래에서 하루를 마감해 보세요."}
           </div>
         ) : (
@@ -706,9 +710,12 @@ export function TodayView() {
         ) : null}
 
         {completedQuests.length > 0 ? (
-          <details className="mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3">
-            <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 [&::-webkit-details-marker]:hidden">
-              완료한 퀘스트 {completedQuests.length}개 보기
+          <details className="disclosure mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3">
+            <summary className="disclosure-summary text-sm font-semibold text-slate-700">
+              <span>완료한 퀘스트 {completedQuests.length}개 보기</span>
+              <span aria-hidden="true" className="disclosure-caret">
+                ▾
+              </span>
             </summary>
             <ul className="mt-3 space-y-2">{completedQuests.map((quest) => renderQuestItem(quest, { showTypeBadge: true }))}</ul>
           </details>
@@ -780,9 +787,12 @@ export function TodayView() {
             현재 선택: {questTypeLabel[selectedType]} · {sectionDescription[selectedType]}
           </p>
 
-          <details className="soft-panel">
-            <summary className="cursor-pointer list-none text-sm font-semibold text-slate-700 [&::-webkit-details-marker]:hidden">
-              고급 설정 열기
+          <details className="disclosure soft-panel">
+            <summary className="disclosure-summary text-sm font-semibold text-slate-700">
+              <span>고급 설정</span>
+              <span aria-hidden="true" className="disclosure-caret">
+                ▾
+              </span>
             </summary>
 
             <div className="mt-3 space-y-3">
@@ -801,14 +811,14 @@ export function TodayView() {
                           : "border-slate-200 bg-white text-slate-600"
                       }`}
                     >
-                      Priority {priorityLabel[priority]}
+                      우선순위 {priorityLabel[priority]}
                     </button>
                   );
                 })}
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">선행 Quest (선택)</label>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">선행 퀘스트 (선택)</label>
                 <select
                   value={selectedDependencyQuestId}
                   onChange={(e) => setSelectedDependencyQuestId(e.target.value)}
@@ -858,7 +868,7 @@ export function TodayView() {
               <div className="rounded-xl border border-slate-200 bg-white p-2">
                 <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                   <input type="checkbox" checked={carryOverEnabled} onChange={onCarryOverEnabledChange} className="h-4 w-4" />
-                  미완료 Quest를 다음 날로 이월
+                  미완료 퀘스트를 다음 날로 이월
                 </label>
 
                 {carryOverEnabled ? (
@@ -881,7 +891,7 @@ export function TodayView() {
         </form>
 
         <p id="quest-input-hint" className="text-xs text-slate-500">
-          Daily/Main/Sub 중 타입만 먼저 고르고 시작한 뒤, 필요할 때만 고급 설정을 열어 주세요.
+          루틴/메인/서브 중 타입만 먼저 고르고 시작한 뒤, 필요할 때만 고급 설정을 열어 주세요.
         </p>
 
         {message ? (
@@ -892,19 +902,24 @@ export function TodayView() {
       </Card>
 
       <Card className="p-0">
-        <details className="overflow-hidden">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
+        <details className="disclosure overflow-hidden">
+          <summary className="disclosure-summary p-4">
             <div>
               <h3 className="text-base font-bold">실행 가이드</h3>
-              <p className="text-xs text-slate-500">추천 실행 순서, Focus, 주간 Main 목표는 필요할 때만 확인하세요.</p>
+              <p className="text-xs text-slate-500">추천 실행 순서, 집중 모드, 주간 메인 목표는 필요할 때만 확인하세요.</p>
             </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">열기</span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">보기</span>
+              <span aria-hidden="true" className="disclosure-caret">
+                ▾
+              </span>
+            </div>
           </summary>
 
           <div className="space-y-3 border-t border-slate-200/70 px-4 pb-4 pt-3">
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <label className="flex items-center justify-between gap-2 text-sm font-semibold text-slate-700">
-                <span>Focus 모드 (지금 할 3개만 보기)</span>
+                <span>집중 모드 (지금 할 3개만 보기)</span>
                 <input
                   type="checkbox"
                   checked={focusMode}
@@ -916,7 +931,7 @@ export function TodayView() {
 
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <label className="mb-1 block text-sm font-semibold text-slate-700">
-                주간 Main Quest 목표치 ({weeklyMainTarget})
+                주간 메인 퀘스트 목표치 ({weeklyMainTarget})
               </label>
               <input
                 type="range"
@@ -925,7 +940,7 @@ export function TodayView() {
                 value={weeklyMainTarget}
                 onChange={onWeeklyMainTargetChange}
                 className="w-full accent-purple-500"
-                aria-label="주간 Main Quest 목표치"
+                aria-label="주간 메인 퀘스트 목표치"
               />
 
               <div className="mt-2 text-xs text-slate-600">
@@ -936,7 +951,7 @@ export function TodayView() {
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <h4 className="mb-2 text-sm font-bold text-slate-700">추천 실행 순서</h4>
               {executionQueue.length === 0 ? (
-                <p className="text-xs text-slate-500">진행 가능한 미완료 Quest가 없어요.</p>
+                <p className="text-xs text-slate-500">진행 가능한 미완료 퀘스트가 없어요.</p>
               ) : (
                 <ol className="space-y-1 text-sm">
                   {executionQueue.slice(0, 5).map((item, index) => (
@@ -962,15 +977,20 @@ export function TodayView() {
       </Card>
 
       <Card className="p-0">
-        <details className="overflow-hidden">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 [&::-webkit-details-marker]:hidden">
+        <details className="disclosure overflow-hidden">
+          <summary className="disclosure-summary p-4">
             <div>
               <h3 className="text-base font-bold">고급 설정 / 운영</h3>
               <p className="text-xs text-slate-500">
                 {showDevTools ? "일일 목표, 타입별 보기, 백업, 개발용 도구를 여기로 모아뒀어요." : "일일 목표, 타입별 보기, 백업을 여기로 모아뒀어요."}
               </p>
             </div>
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">열기</span>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">보기</span>
+              <span aria-hidden="true" className="disclosure-caret">
+                ▾
+              </span>
+            </div>
           </summary>
 
           <div className="space-y-4 border-t border-slate-200/70 px-4 pb-4 pt-3">

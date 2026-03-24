@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Button, Card } from "@/components/ui";
-import { getBuildingHeight } from "@/domain/building";
+import { getBuildingHeight, roofTypeLabel } from "@/domain/building";
 import { getDaysInMonth } from "@/domain/date";
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getDominantQuestType, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
@@ -13,7 +13,7 @@ import { moveDateInMonth, TownDirection } from "@/domain/town-navigation";
 import { DailyRecord, QuestType } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
 
-const weekdayLabel = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const weekdayLabel = ["일", "월", "화", "수", "목", "금", "토"];
 
 const roofColor = {
   none: "border-b-slate-300",
@@ -38,6 +38,15 @@ const sceneryVisual: Record<"park" | "plaza" | "pond", { base: string; icon: str
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const directionByKey: Partial<Record<string, TownDirection>> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowUp: "up",
+  ArrowDown: "down",
+  Home: "home",
+  End: "end"
+};
 
 const getCameraTarget = (plot: TownPlot | undefined, layout: TownLayout, reducedMotion: boolean) => {
   if (!plot) return { x: 0, y: 0, scale: 1 };
@@ -77,9 +86,29 @@ interface TownLotProps {
   selected: boolean;
   reducedMotion: boolean;
   onSelect: (date: string) => void;
+  onNavigate: (currentDate: string, direction: TownDirection) => void;
 }
 
-const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedMotion, onSelect }: TownLotProps) {
+const getLotAriaLabel = (plot: TownPlot, floors: number, record?: DailyRecord, dominantType?: QuestType | null) => {
+  if (!record) {
+    return `${plot.date} 건물, ${floors}층, 아직 기록 없음`;
+  }
+
+  const dominantLabel = dominantType ? `${questTypeShortLabel[dominantType]} 중심` : "타입 미정";
+  const roofLabel = record.isFinalized ? roofTypeLabel[record.roofType] : roofTypeLabel.none;
+
+  return `${plot.date} 건물, ${floors}층, 완료 ${record.completedCount}/${record.totalCount}, ${dominantLabel}, ${roofLabel}`;
+};
+
+const TownLot = memo(function TownLot({
+  plot,
+  layout,
+  record,
+  selected,
+  reducedMotion,
+  onSelect,
+  onNavigate
+}: TownLotProps) {
   const height = getBuildingHeight(record?.completedCount ?? 0);
   const floors = Math.min(height, 12);
   const roofType = record?.isFinalized ? record.roofType : "none";
@@ -96,9 +125,19 @@ const TownLot = memo(function TownLot({ plot, layout, record, selected, reducedM
 
   return (
     <button
+      type="button"
+      id={`town-lot-${plot.date}`}
       onClick={() => onSelect(plot.date)}
-      aria-label={`${plot.date} 건물 선택`}
+      onKeyDown={(event) => {
+        const direction = directionByKey[event.key];
+        if (!direction) return;
+
+        event.preventDefault();
+        onNavigate(plot.date, direction);
+      }}
+      aria-label={getLotAriaLabel(plot, floors, record, dominantType)}
       aria-pressed={selected}
+      aria-current={selected ? "date" : undefined}
       className="group absolute text-left outline-none focus-visible:z-10"
       style={{
         left: layout.padding + plot.col * layout.slot,
@@ -225,38 +264,48 @@ export function MonthlyTownView() {
     }));
   };
 
+  const focusTownLot = useCallback((date: string) => {
+    requestAnimationFrame(() => {
+      document.getElementById(`town-lot-${date}`)?.focus();
+    });
+  }, []);
+
+  const moveSelection = useCallback(
+    (currentDate: string | undefined, direction: TownDirection, shouldFocusLot = false) => {
+      const nextDate = moveDateInMonth(currentDate, selectedMonth, dayCount, direction);
+      selectDateInTown(nextDate);
+
+      if (shouldFocusLot) {
+        focusTownLot(nextDate);
+      }
+    },
+    [dayCount, focusTownLot, selectDateInTown, selectedMonth]
+  );
+
   const handleMapKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
-      const directionByKey: Record<string, TownDirection> = {
-        ArrowLeft: "left",
-        ArrowRight: "right",
-        ArrowUp: "up",
-        ArrowDown: "down",
-        Home: "home",
-        End: "end"
-      };
-
       const direction = directionByKey[event.key];
       if (!direction) return;
 
       event.preventDefault();
-      const nextDate = moveDateInMonth(selectedDateInTown, selectedMonth, dayCount, direction);
-      selectDateInTown(nextDate);
+      moveSelection(selectedDateInTown, direction);
     },
-    [dayCount, selectDateInTown, selectedDateInTown, selectedMonth]
+    [moveSelection, selectedDateInTown]
   );
 
   return (
     <div className="space-y-4" id="town-panel-content">
       <Card>
-        <div className="mb-3 flex items-center justify-between">
-          <Button className="min-h-11 bg-slate-100" onClick={() => moveMonth(-1)} aria-label="이전 달 보기">
-            이전 달
-          </Button>
-          <h2 className="text-lg font-black tracking-tight">🏙️ {selectedMonth} Questown Street</h2>
-          <Button className="min-h-11 bg-slate-100" onClick={() => moveMonth(1)} aria-label="다음 달 보기">
-            다음 달
-          </Button>
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-center text-lg font-black tracking-tight sm:text-left">🏙️ {selectedMonth} Questown 거리</h2>
+          <div className="flex items-center justify-between gap-2 sm:justify-end">
+            <Button type="button" className="min-h-11 bg-slate-100" onClick={() => moveMonth(-1)} aria-label="이전 달 보기">
+              이전 달
+            </Button>
+            <Button type="button" className="min-h-11 bg-slate-100" onClick={() => moveMonth(1)} aria-label="다음 달 보기">
+              다음 달
+            </Button>
+          </div>
         </div>
 
         <div className="mb-3 flex flex-wrap gap-2">
@@ -276,25 +325,25 @@ export function MonthlyTownView() {
           ))}
         </div>
 
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p id="town-map-help" className="text-xs text-slate-500">
-            캘린더 배치 기반 타운입니다. 방향키로 날짜 이동, 탐색 버튼으로 맵 이동 가능.
+            캘린더 배치 기반 타운입니다. 방향키로 날짜를 이동하고, 탐색 버튼으로 화면 중심을 조정할 수 있어요.
           </p>
-          <div className="flex items-center gap-1">
-            <Button className="min-h-8 px-2 py-1 bg-slate-100" onClick={() => nudgeCamera(-26, 0)} aria-label="맵 왼쪽">
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(-26, 0)} aria-label="맵 왼쪽">
               ◀
             </Button>
-            <Button className="min-h-8 px-2 py-1 bg-slate-100" onClick={() => nudgeCamera(26, 0)} aria-label="맵 오른쪽">
+            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(26, 0)} aria-label="맵 오른쪽">
               ▶
             </Button>
-            <Button className="min-h-8 px-2 py-1 bg-slate-100" onClick={() => nudgeCamera(0, -20)} aria-label="맵 위쪽">
+            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(0, -20)} aria-label="맵 위쪽">
               ▲
             </Button>
-            <Button className="min-h-8 px-2 py-1 bg-slate-100" onClick={() => nudgeCamera(0, 20)} aria-label="맵 아래쪽">
+            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => nudgeCamera(0, 20)} aria-label="맵 아래쪽">
               ▼
             </Button>
-            <Button className="min-h-8 px-2 py-1 bg-slate-100" onClick={() => setCameraNudge({ x: 0, y: 0 })}>
-              reset
+            <Button type="button" className="min-h-8 bg-slate-100 px-2 py-1" onClick={() => setCameraNudge({ x: 0, y: 0 })}>
+              중앙
             </Button>
           </div>
         </div>
@@ -386,15 +435,16 @@ export function MonthlyTownView() {
                 selected={selectedDateInTown === plot.date}
                 reducedMotion={reducedMotion}
                 onSelect={selectDateInTown}
+                onNavigate={(currentDate, direction) => moveSelection(currentDate, direction, true)}
               />
             ))}
           </motion.div>
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
-          <div className="metric-pill flex items-center justify-center gap-1">🏢 Building Lot</div>
-          <div className="metric-pill flex items-center justify-center gap-1">🛣️ Street Grid</div>
-          <div className="metric-pill flex items-center justify-center gap-1">🔖 Dominant Quest</div>
+          <div className="metric-pill flex items-center justify-center gap-1">🏢 빌딩 부지</div>
+          <div className="metric-pill flex items-center justify-center gap-1">🛣️ 거리 그리드</div>
+          <div className="metric-pill flex items-center justify-center gap-1">🔖 중심 퀘스트</div>
         </div>
       </Card>
 
@@ -405,16 +455,16 @@ export function MonthlyTownView() {
           <span
             className={`mb-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${districtAccent[selectedPlot.district] ?? "bg-slate-100 text-slate-700"}`}
           >
-            {selectedPlot.district} · Day {selectedPlot.day}
+            {selectedPlot.district} · {selectedPlot.day}일
           </span>
         ) : null}
 
         {!selectedDateInTown ? (
-          <p className="text-sm text-slate-500">Town에서 건물을 선택하면 상세를 보여줍니다.</p>
+          <p className="text-sm text-slate-500">타운에서 건물을 선택하면 상세를 보여줍니다.</p>
         ) : !selectedRecord ? (
           <div className="space-y-1 text-sm text-slate-600">
             <p>날짜: {selectedDateInTown}</p>
-            <p>아직 기록이 없어요. 오늘 Quest를 완료해서 건물을 세워보세요.</p>
+            <p>아직 기록이 없어요. 오늘 퀘스트를 완료해서 건물을 세워보세요.</p>
           </div>
         ) : (
           <div className="space-y-3 text-sm">
@@ -423,7 +473,7 @@ export function MonthlyTownView() {
               완료: {selectedRecord.completedCount}/{selectedRecord.totalCount} (
               {Math.round(selectedRecord.completionRate * 100)}%)
             </p>
-            <p>지붕: {selectedRecord.roofType}</p>
+            <p>지붕: {roofTypeLabel[selectedRecord.roofType]}</p>
             <p>상태: {selectedRecord.isFinalized ? "마감됨" : "진행 중"}</p>
 
             <div className="grid grid-cols-3 gap-2">

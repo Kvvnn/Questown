@@ -8,7 +8,7 @@ import { useQuestownStore } from "@/store/questown-store";
 const TodayView = dynamic(() => import("@/components/today-view").then((mod) => mod.TodayView), {
   loading: () => (
     <Card role="status" aria-live="polite" className="text-sm text-slate-500">
-      Today 화면 로딩 중...
+      오늘 화면 로딩 중...
     </Card>
   )
 });
@@ -16,7 +16,7 @@ const TodayView = dynamic(() => import("@/components/today-view").then((mod) => 
 const MonthlyTownView = dynamic(() => import("@/components/monthly-town-view").then((mod) => mod.MonthlyTownView), {
   loading: () => (
     <Card role="status" aria-live="polite" className="text-sm text-slate-500">
-      Town scene 로딩 중...
+      타운 화면 로딩 중...
     </Card>
   )
 });
@@ -68,7 +68,7 @@ export default function HomePage() {
   return (
     <main id="main-content" className="mx-auto min-h-screen w-full max-w-xl space-y-4 px-4 py-6">
       <a
-        href="#tab-panel"
+        href={currentTab === "today" ? "#panel-today" : "#panel-town"}
         className="sr-only absolute left-2 top-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:not-sr-only"
       >
         본문으로 바로가기
@@ -84,6 +84,7 @@ export default function HomePage() {
       <Card className="p-2">
         <div role="tablist" aria-label="Questown 화면 전환" className="grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
           <Button
+            type="button"
             role="tab"
             id="tab-today"
             aria-controls="panel-today"
@@ -93,9 +94,10 @@ export default function HomePage() {
             onClick={() => setTab("today")}
             onKeyDown={(event) => handleTabKeyDown(event, "today")}
           >
-            Today
+            오늘
           </Button>
           <Button
+            type="button"
             role="tab"
             id="tab-town"
             aria-controls="panel-town"
@@ -105,23 +107,18 @@ export default function HomePage() {
             onClick={() => setTab("town")}
             onKeyDown={(event) => handleTabKeyDown(event, "town")}
           >
-            Town
+            타운
           </Button>
         </div>
       </Card>
 
-      <section
-        id="tab-panel"
-        role="tabpanel"
-        aria-labelledby={currentTab === "today" ? "tab-today" : "tab-town"}
-        className="outline-none"
-      >
+      <section id="tab-panel" className="outline-none">
         {currentTab === "today" ? (
-          <div id="panel-today" tabIndex={-1}>
+          <div id="panel-today" role="tabpanel" aria-labelledby="tab-today" tabIndex={-1}>
             <TodayView />
           </div>
         ) : (
-          <div id="panel-town" tabIndex={-1}>
+          <div id="panel-town" role="tabpanel" aria-labelledby="tab-town" tabIndex={-1}>
             <MonthlyTownView />
           </div>
         )}
