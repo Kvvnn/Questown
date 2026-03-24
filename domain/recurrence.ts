@@ -82,7 +82,7 @@ export const createRecurringQuestCopy = (quest: QuestItem, targetDateKey: string
     carryOverEnabled: quest.carryOverEnabled,
     carryOverLimit: quest.carryOverLimit,
     carryOverCount: 0,
-    carryOverSourceQuestId: quest.carryOverSourceQuestId
+    carryOverSourceQuestId: undefined
   };
 };
 

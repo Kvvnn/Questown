@@ -132,6 +132,34 @@ const sanitizeDependencyIds = (ids: unknown, availableQuestIds: Set<string>, sel
   return cleaned && cleaned.length > 0 ? cleaned : undefined;
 };
 
+const hasDependencyPath = (startId: string, targetId: string, questMap: Map<string, QuestItem>) => {
+  const visited = new Set<string>();
+  const stack = [startId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop();
+    if (!currentId || visited.has(currentId)) continue;
+    if (currentId === targetId) return true;
+
+    visited.add(currentId);
+
+    const currentQuest = questMap.get(currentId);
+    (currentQuest?.dependencyQuestIds ?? []).forEach((dependencyId) => {
+      if (!visited.has(dependencyId)) stack.push(dependencyId);
+    });
+  }
+
+  return false;
+};
+
+const sanitizePatchedDependencyIds = (ids: unknown, questId: string, questMap: Map<string, QuestItem>) => {
+  const cleaned = normalizeDependencyIds(ids, questId)?.filter((value) => questMap.has(value));
+  if (!cleaned || cleaned.length === 0) return undefined;
+
+  const safeDependencies = cleaned.filter((dependencyId) => !hasDependencyPath(dependencyId, questId, questMap));
+  return safeDependencies.length > 0 ? safeDependencies : undefined;
+};
+
 const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
   const completedCount = record.quests.filter((quest) => quest.completed).length;
   const totalCount = record.quests.length;
@@ -402,10 +430,10 @@ export const useQuestownStore = create<QuestownState>()(
         const target = today.quests.find((quest) => quest.id === questId);
         if (!target) return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
 
-        const availableIds = new Set(today.quests.map((quest) => quest.id));
+        const questMap = new Map(today.quests.map((quest) => [quest.id, quest] as const));
         const hasDependencyPatch = Object.prototype.hasOwnProperty.call(patch, "dependencyQuestIds");
         const dependencies = hasDependencyPatch
-          ? sanitizeDependencyIds(patch.dependencyQuestIds, availableIds, questId)
+          ? sanitizePatchedDependencyIds(patch.dependencyQuestIds, questId, questMap)
           : undefined;
 
         const next = recalc(
@@ -501,6 +529,9 @@ export const useQuestownStore = create<QuestownState>()(
         const dateKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 삭제할 수 없어요." };
+        if (!today.quests.some((quest) => quest.id === questId)) {
+          return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
+        }
 
         const nextQuests = today.quests
           .filter((quest) => quest.id !== questId)

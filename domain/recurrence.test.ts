@@ -112,4 +112,20 @@ describe("recurrence utils", () => {
     expect(generated[0]?.carryOverCount).toBe(1);
     expect(generated[0]?.recurrencePattern).toBe("daily");
   });
+
+  it("drops carry-over provenance when recurrence resumes after the carry-over limit", () => {
+    const generated = createNextDayQuestCopies(
+      {
+        ...baseQuest,
+        id: "q2",
+        carryOverCount: 3,
+        carryOverSourceQuestId: "q1"
+      },
+      "2026-03-25"
+    );
+
+    expect(generated).toHaveLength(1);
+    expect(generated[0]?.carryOverCount).toBe(0);
+    expect(generated[0]?.carryOverSourceQuestId).toBeUndefined();
+  });
 });
