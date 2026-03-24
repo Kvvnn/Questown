@@ -166,6 +166,8 @@ export function TodayView() {
     return upbeatMessages[record.completedCount % upbeatMessages.length];
   }, [dailyGoal, record.completedCount]);
 
+  const isQuestTitleEmpty = titleInput.trim().length === 0;
+
   const clearEventQueue = useCallback(() => {
     eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
     eventTimeoutRefs.current = [];
@@ -670,13 +672,14 @@ export function TodayView() {
           <div className="flex gap-2">
             <input
               aria-label="새 퀘스트 입력"
+              aria-invalid={isQuestTitleEmpty}
               value={titleInput}
               maxLength={80}
               onChange={(e) => setTitleInput(e.target.value)}
               placeholder="예: 오늘 편집본 완성"
               className="min-h-11 flex-1 rounded-2xl border-2 border-slate-200 px-3 py-2 outline-none focus:border-quest-primary"
             />
-            <Button type="submit" className="min-h-11 bg-quest-primary text-white">
+            <Button type="submit" className="min-h-11 bg-quest-primary text-white" disabled={isQuestTitleEmpty}>
               추가
             </Button>
           </div>
