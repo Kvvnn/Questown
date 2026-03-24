@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
 import { addDays, addMonths, ensureDailyRecord, toDateKey, toMonthKey } from "@/domain/date";
+import { getBlockedDependencyIds, normalizeQuestPriority } from "@/domain/execution";
 import { getQuestCounts } from "@/domain/quest";
 import {
   createCarryOverQuestCopy,
@@ -12,7 +13,15 @@ import {
   mergeGeneratedQuests,
   normalizeRecurrencePattern
 } from "@/domain/recurrence";
-import { AppBackupData, DailyRecord, QuestItem, QuestType, RecurrencePattern, TabType } from "@/domain/types";
+import {
+  AppBackupData,
+  DailyRecord,
+  QuestItem,
+  QuestPriority,
+  QuestType,
+  RecurrencePattern,
+  TabType
+} from "@/domain/types";
 
 const MAX_QUEST_TITLE_LENGTH = 80;
 
@@ -24,6 +33,9 @@ interface LegacyQuestLike {
   completed?: boolean;
   createdAt?: string;
   completedAt?: string;
+  priority?: string;
+  dependencyQuestIds?: string[];
+  focusPinned?: boolean;
   isRecurring?: boolean;
   recurrenceKey?: string;
   recurrencePattern?: string;
@@ -45,10 +57,18 @@ interface LegacyRecordLike {
 interface AddQuestInput {
   title: string;
   type: QuestType;
+  priority?: QuestPriority;
+  dependencyQuestIds?: string[];
   recurrencePattern?: RecurrencePattern;
   recurrenceIntervalDays?: number;
   carryOverEnabled?: boolean;
   carryOverLimit?: number;
+}
+
+interface UpdateQuestMetaInput {
+  priority?: QuestPriority;
+  dependencyQuestIds?: string[];
+  focusPinned?: boolean;
 }
 
 interface QuestownState {
@@ -56,12 +76,15 @@ interface QuestownState {
   currentDateKey: string;
   selectedMonth: string;
   dailyGoal: number;
+  weeklyMainTarget: number;
   recordsByDate: Record<string, DailyRecord>;
   selectedDateInTown?: string;
 
   setTab: (tab: TabType) => void;
   setDailyGoal: (goal: number) => void;
+  setWeeklyMainTarget: (target: number) => void;
   addQuest: (input: AddQuestInput) => { ok: boolean; reason?: string };
+  updateQuestMeta: (questId: string, patch: UpdateQuestMetaInput) => { ok: boolean; reason?: string };
   toggleQuest: (questId: string) => { ok: boolean; reason?: string };
   deleteQuest: (questId: string) => { ok: boolean; reason?: string };
   finalizeCurrentDay: () => void;
@@ -85,6 +108,20 @@ const normalizePositiveInt = (value: unknown, fallback: number, min: number, max
   return Math.min(max, Math.max(min, Math.round(n)));
 };
 
+const sanitizeDependencyIds = (ids: unknown, availableQuestIds: Set<string>, selfId?: string) => {
+  if (!Array.isArray(ids)) return undefined;
+
+  const cleaned = Array.from(
+    new Set(
+      ids
+        .filter((value): value is string => typeof value === "string")
+        .filter((value) => value !== selfId && availableQuestIds.has(value))
+    )
+  );
+
+  return cleaned.length > 0 ? cleaned : undefined;
+};
+
 const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
   const completedCount = record.quests.filter((quest) => quest.completed).length;
   const totalCount = record.quests.length;
@@ -103,7 +140,7 @@ const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecor
   };
 };
 
-const normalizeQuest = (raw: LegacyQuestLike, dateKey: string): QuestItem | null => {
+const normalizeQuest = (raw: LegacyQuestLike, dateKey: string, availableQuestIds?: Set<string>): QuestItem | null => {
   const title = (raw.title ?? raw.text ?? "").trim();
   if (!title) return null;
 
@@ -116,13 +153,18 @@ const normalizeQuest = (raw: LegacyQuestLike, dateKey: string): QuestItem | null
   const carryOverEnabled = Boolean(raw.carryOverEnabled);
   const carryOverLimit = carryOverEnabled ? normalizePositiveInt(raw.carryOverLimit, 3, 1, 30) : undefined;
 
-  return {
-    id: raw.id ?? crypto.randomUUID(),
+  const id = raw.id ?? crypto.randomUUID();
+
+  const quest: QuestItem = {
+    id,
     title,
     type,
     completed: Boolean(raw.completed),
     createdAt: raw.createdAt ?? new Date().toISOString(),
     completedAt: raw.completed ? raw.completedAt ?? new Date().toISOString() : undefined,
+    priority: normalizeQuestPriority(raw.priority as QuestPriority | undefined, type),
+    focusPinned: Boolean(raw.focusPinned),
+    dependencyQuestIds: sanitizeDependencyIds(raw.dependencyQuestIds, availableQuestIds ?? new Set(), id),
     isRecurring,
     recurrencePattern: pattern,
     recurrenceKey: isRecurring ? raw.recurrenceKey ?? raw.id ?? crypto.randomUUID() : undefined,
@@ -133,6 +175,8 @@ const normalizeQuest = (raw: LegacyQuestLike, dateKey: string): QuestItem | null
     carryOverCount: carryOverEnabled ? normalizePositiveInt(raw.carryOverCount, 0, 0, 365) : undefined,
     carryOverSourceQuestId: carryOverEnabled ? raw.carryOverSourceQuestId : undefined
   };
+
+  return quest;
 };
 
 const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord => {
@@ -140,7 +184,16 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
   if (!raw) return base;
 
   const source = Array.isArray(raw.quests) ? raw.quests : Array.isArray(raw.todos) ? raw.todos : [];
-  const quests = source.map((quest) => normalizeQuest(quest, dateKey)).filter((quest): quest is QuestItem => Boolean(quest));
+
+  const initial = source
+    .map((quest) => normalizeQuest(quest, dateKey))
+    .filter((quest): quest is QuestItem => Boolean(quest));
+
+  const ids = new Set(initial.map((quest) => quest.id));
+  const quests = initial.map((quest) => ({
+    ...quest,
+    dependencyQuestIds: sanitizeDependencyIds(quest.dependencyQuestIds, ids, quest.id)
+  }));
 
   return recalc(
     {
@@ -222,6 +275,7 @@ export const useQuestownStore = create<QuestownState>()(
       currentDateKey: toDateKey(),
       selectedMonth: toMonthKey(),
       dailyGoal: 3,
+      weeklyMainTarget: 10,
       recordsByDate: {},
 
       setTab: (tab) => set({ currentTab: tab }),
@@ -231,9 +285,16 @@ export const useQuestownStore = create<QuestownState>()(
         set({ dailyGoal: nextGoal });
       },
 
+      setWeeklyMainTarget: (target) => {
+        const nextTarget = normalizePositiveInt(target, 10, 1, 50);
+        set({ weeklyMainTarget: nextTarget });
+      },
+
       addQuest: ({
         title,
         type,
+        priority,
+        dependencyQuestIds,
         recurrencePattern = "none",
         recurrenceIntervalDays,
         carryOverEnabled = false,
@@ -259,6 +320,9 @@ export const useQuestownStore = create<QuestownState>()(
           return { ok: false, reason: "같은 타입에 동일한 퀘스트가 이미 있어요." };
         }
 
+        const availableIds = new Set(today.quests.map((quest) => quest.id));
+        const dependencies = sanitizeDependencyIds(dependencyQuestIds, availableIds);
+
         const next = recalc(
           {
             ...today,
@@ -270,6 +334,9 @@ export const useQuestownStore = create<QuestownState>()(
                 type,
                 completed: false,
                 createdAt: new Date().toISOString(),
+                priority: normalizeQuestPriority(priority, type),
+                dependencyQuestIds: dependencies,
+                focusPinned: false,
                 isRecurring,
                 recurrencePattern: pattern,
                 recurrenceKey: isRecurring ? crypto.randomUUID() : undefined,
@@ -296,10 +363,68 @@ export const useQuestownStore = create<QuestownState>()(
         return { ok: true };
       },
 
+      updateQuestMeta: (questId, patch) => {
+        const dateKey = get().currentDateKey;
+        const today = getRecord(get().recordsByDate, dateKey);
+        if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 수정할 수 없어요." };
+
+        const target = today.quests.find((quest) => quest.id === questId);
+        if (!target) return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
+
+        const availableIds = new Set(today.quests.map((quest) => quest.id));
+        const hasDependencyPatch = Object.prototype.hasOwnProperty.call(patch, "dependencyQuestIds");
+        const dependencies = hasDependencyPatch
+          ? sanitizeDependencyIds(patch.dependencyQuestIds, availableIds, questId)
+          : undefined;
+
+        const next = recalc(
+          {
+            ...today,
+            quests: today.quests.map((quest) => {
+              if (quest.id !== questId) return quest;
+
+              return {
+                ...quest,
+                priority:
+                  patch.priority !== undefined
+                    ? normalizeQuestPriority(patch.priority, quest.type)
+                    : normalizeQuestPriority(quest.priority, quest.type),
+                focusPinned: patch.focusPinned ?? quest.focusPinned,
+                dependencyQuestIds: hasDependencyPatch ? dependencies : quest.dependencyQuestIds
+              };
+            }),
+            isFinalized: false,
+            roofType: "none"
+          },
+          false
+        );
+
+        set((state) => ({
+          recordsByDate: {
+            ...state.recordsByDate,
+            [dateKey]: next
+          }
+        }));
+
+        return { ok: true };
+      },
+
       toggleQuest: (questId) => {
         const dateKey = get().currentDateKey;
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 체크 변경이 불가해요." };
+
+        const questMap = new Map(today.quests.map((quest) => [quest.id, quest] as const));
+        const target = questMap.get(questId);
+        if (!target) return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
+
+        if (!target.completed) {
+          const blockedByIds = getBlockedDependencyIds(target, questMap);
+          if (blockedByIds.length > 0) {
+            const blocker = questMap.get(blockedByIds[0]);
+            return { ok: false, reason: `선행 Quest를 먼저 완료하세요: ${blocker?.title ?? blockedByIds[0]}` };
+          }
+        }
 
         const next = recalc(
           {
@@ -334,10 +459,21 @@ export const useQuestownStore = create<QuestownState>()(
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 삭제할 수 없어요." };
 
+        const nextQuests = today.quests
+          .filter((quest) => quest.id !== questId)
+          .map((quest) => {
+            if (!quest.dependencyQuestIds?.includes(questId)) return quest;
+            const deps = quest.dependencyQuestIds.filter((id) => id !== questId);
+            return {
+              ...quest,
+              dependencyQuestIds: deps.length > 0 ? deps : undefined
+            };
+          });
+
         const next = recalc(
           {
             ...today,
-            quests: today.quests.filter((quest) => quest.id !== questId),
+            quests: nextQuests,
             isFinalized: false,
             roofType: "none"
           },
@@ -431,12 +567,13 @@ export const useQuestownStore = create<QuestownState>()(
       },
 
       exportBackup: () => ({
-        version: 3,
+        version: 4,
         exportedAt: new Date().toISOString(),
         state: {
           currentDateKey: get().currentDateKey,
           selectedMonth: get().selectedMonth,
           dailyGoal: get().dailyGoal,
+          weeklyMainTarget: get().weeklyMainTarget,
           recordsByDate: get().recordsByDate
         }
       }),
@@ -457,6 +594,7 @@ export const useQuestownStore = create<QuestownState>()(
           currentDateKey: nextDate,
           selectedMonth: data.state.selectedMonth || toMonthKey(new Date(`${nextDate}T00:00:00+09:00`)),
           dailyGoal: data.state.dailyGoal || 3,
+          weeklyMainTarget: normalizePositiveInt((data.state as { weeklyMainTarget?: number }).weeklyMainTarget, 10, 1, 50),
           recordsByDate: normalizedRecords
         });
 
@@ -465,11 +603,12 @@ export const useQuestownStore = create<QuestownState>()(
     }),
     {
       name: "questown-mvp-storage",
-      version: 5,
+      version: 6,
       storage: createJSONStorage(() => localStorage),
       migrate: (persistedState: unknown) => {
         const state = (persistedState ?? {}) as Partial<QuestownState> & {
           recordsByDate?: Record<string, LegacyRecordLike>;
+          weeklyMainTarget?: number;
         };
 
         const recordsByDate = Object.entries(state.recordsByDate ?? {}).reduce<Record<string, DailyRecord>>(
@@ -485,6 +624,7 @@ export const useQuestownStore = create<QuestownState>()(
           currentDateKey: state.currentDateKey ?? toDateKey(),
           selectedMonth: state.selectedMonth ?? toMonthKey(),
           dailyGoal: state.dailyGoal ?? 3,
+          weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
           recordsByDate,
           selectedDateInTown: state.selectedDateInTown
         } as QuestownState;

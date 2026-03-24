@@ -2,6 +2,8 @@ export type RoofType = "none" | "low" | "mid" | "high";
 
 export type QuestType = "daily" | "main" | "sub";
 
+export type QuestPriority = "p1" | "p2" | "p3";
+
 export type RecurrencePattern = "none" | "daily" | "weekdays" | "weekly" | "interval";
 
 export interface QuestTypeCounter {
@@ -17,6 +19,11 @@ export interface QuestItem {
   completed: boolean;
   createdAt: string;
   completedAt?: string;
+
+  // Execution metadata
+  priority?: QuestPriority;
+  dependencyQuestIds?: string[];
+  focusPinned?: boolean;
 
   // Recurrence metadata
   isRecurring?: boolean;
@@ -56,6 +63,7 @@ export interface AppBackupData {
     currentDateKey: string;
     selectedMonth: string;
     dailyGoal: number;
+    weeklyMainTarget?: number;
     recordsByDate: Record<string, DailyRecord>;
   };
 }

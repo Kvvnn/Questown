@@ -50,6 +50,8 @@ npm run build
   - `date.ts` / `date.test.ts`
   - `building.ts` / `building.test.ts`
   - `quest.ts` / `quest.test.ts`
+  - `execution.ts` / `execution.test.ts`
+  - `recurrence.ts` / `recurrence.test.ts`
   - `floor-style.ts` / `floor-style.test.ts`
   - `progress.ts` / `progress.test.ts`
   - `town-map.ts` / `town-map.test.ts`
@@ -64,6 +66,9 @@ npm run build
   - Main Quest (전진, 강조)
   - Sub Quest (성장)
 - 퀘스트 추가/완료/삭제 + 타입 선택
+- 반복/이월 자동화(Recurring + Carry-over)
+- 우선순위(P1/P2/P3), 선행 의존성, Focus 고정
+- 추천 실행 큐 + Focus Mode + 주간 Main 목표치
 - 체크 시 즉시 피드백 토스트 + building 애니메이션
 - 하루 마감 시 완료율 기반 지붕 연출
 - Town 화면에서 월간 도시 맵 + 날짜 상세
