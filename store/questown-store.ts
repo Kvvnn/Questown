@@ -3,7 +3,16 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
-import { addDays, addMonths, ensureDailyRecord, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
+import {
+  addDays,
+  addMonths,
+  dateKeyToDate,
+  ensureDailyRecord,
+  isDateKey,
+  isMonthKey,
+  toDateKey,
+  toMonthKey
+} from "@/domain/date";
 import {
   getBlockedDependencyIds,
   getCompletedDependentIds,
@@ -114,6 +123,31 @@ const normalizePositiveInt = (value: unknown, fallback: number, min: number, max
   return Math.min(max, Math.max(min, Math.round(n)));
 };
 
+const normalizeNonEmptyString = (value: unknown) => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
+const normalizeTimestamp = (value: unknown, fallback: string) => {
+  const normalized = normalizeNonEmptyString(value);
+  if (!normalized) return fallback;
+
+  const parsed = Date.parse(normalized);
+  return Number.isNaN(parsed) ? fallback : new Date(parsed).toISOString();
+};
+
+const normalizeQuestId = (value: unknown, usedIds: Set<string>) => {
+  let nextId = normalizeNonEmptyString(value) ?? crypto.randomUUID();
+
+  while (usedIds.has(nextId)) {
+    nextId = crypto.randomUUID();
+  }
+
+  usedIds.add(nextId);
+  return nextId;
+};
+
 const normalizeDependencyIds = (ids: unknown, selfId?: string) => {
   if (!Array.isArray(ids)) return undefined;
 
@@ -180,7 +214,12 @@ const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecor
   };
 };
 
-const normalizeQuest = (raw: LegacyQuestLike, dateKey: string, availableQuestIds?: Set<string>): QuestItem | null => {
+const normalizeQuest = (
+  raw: LegacyQuestLike,
+  dateKey: string,
+  usedQuestIds: Set<string>,
+  availableQuestIds?: Set<string>
+): QuestItem | null => {
   const title = (raw.title ?? raw.text ?? "").trim();
   if (!title) return null;
 
@@ -193,15 +232,19 @@ const normalizeQuest = (raw: LegacyQuestLike, dateKey: string, availableQuestIds
   const carryOverEnabled = Boolean(raw.carryOverEnabled);
   const carryOverLimit = carryOverEnabled ? normalizePositiveInt(raw.carryOverLimit, 3, 1, 30) : undefined;
 
-  const id = raw.id ?? crypto.randomUUID();
+  const id = normalizeQuestId(raw.id, usedQuestIds);
+  const fallbackCreatedAt = dateKeyToDate(dateKey).toISOString();
+  const createdAt = normalizeTimestamp(raw.createdAt, fallbackCreatedAt);
+  const completedAt = raw.completed ? normalizeTimestamp(raw.completedAt, createdAt) : undefined;
+  const recurrenceKey = normalizeNonEmptyString(raw.recurrenceKey) ?? id;
 
   const quest: QuestItem = {
     id,
     title,
     type,
     completed: Boolean(raw.completed),
-    createdAt: raw.createdAt ?? new Date().toISOString(),
-    completedAt: raw.completed ? raw.completedAt ?? new Date().toISOString() : undefined,
+    createdAt,
+    completedAt,
     priority: normalizeQuestPriority(raw.priority as QuestPriority | undefined, type),
     focusPinned: Boolean(raw.focusPinned),
     dependencyQuestIds: availableQuestIds
@@ -209,13 +252,13 @@ const normalizeQuest = (raw: LegacyQuestLike, dateKey: string, availableQuestIds
       : normalizeDependencyIds(raw.dependencyQuestIds, id),
     isRecurring,
     recurrencePattern: pattern,
-    recurrenceKey: isRecurring ? raw.recurrenceKey ?? raw.id ?? crypto.randomUUID() : undefined,
-    recurrenceAnchorDate: isRecurring ? raw.recurrenceAnchorDate ?? dateKey : undefined,
+    recurrenceKey: isRecurring ? recurrenceKey : undefined,
+    recurrenceAnchorDate: isRecurring ? (isDateKey(raw.recurrenceAnchorDate) ? raw.recurrenceAnchorDate : dateKey) : undefined,
     recurrenceIntervalDays,
     carryOverEnabled,
     carryOverLimit,
     carryOverCount: carryOverEnabled ? normalizePositiveInt(raw.carryOverCount, 0, 0, 365) : undefined,
-    carryOverSourceQuestId: carryOverEnabled ? raw.carryOverSourceQuestId : undefined
+    carryOverSourceQuestId: carryOverEnabled ? normalizeNonEmptyString(raw.carryOverSourceQuestId) : undefined
   };
 
   return quest;
@@ -226,9 +269,10 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
   if (!raw) return base;
 
   const source = Array.isArray(raw.quests) ? raw.quests : Array.isArray(raw.todos) ? raw.todos : [];
+  const usedQuestIds = new Set<string>();
 
   const initial = source
-    .map((quest) => normalizeQuest(quest, dateKey))
+    .map((quest) => normalizeQuest(quest, dateKey, usedQuestIds))
     .filter((quest): quest is QuestItem => Boolean(quest));
 
   const ids = new Set(initial.map((quest) => quest.id));
