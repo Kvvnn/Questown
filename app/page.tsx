@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { KeyboardEvent, useEffect } from "react";
+import { KeyboardEvent, useEffect, useState } from "react";
 import { Button, Card } from "@/components/ui";
 import { useQuestownStore } from "@/store/questown-store";
 
@@ -26,6 +26,10 @@ export default function HomePage() {
   const setTab = useQuestownStore((s) => s.setTab);
   const hydrateToday = useQuestownStore((s) => s.hydrateToday);
   const rolloverToToday = useQuestownStore((s) => s.rolloverToToday);
+  const [loadedTabs, setLoadedTabs] = useState(() => ({
+    today: currentTab === "today",
+    town: currentTab === "town"
+  }));
 
   useEffect(() => {
     const syncToday = () => {
@@ -51,10 +55,19 @@ export default function HomePage() {
     };
   }, [hydrateToday, rolloverToToday]);
 
+  useEffect(() => {
+    setLoadedTabs((prev) => (prev[currentTab] ? prev : { ...prev, [currentTab]: true }));
+  }, [currentTab]);
+
   const focusTab = (nextTab: "today" | "town") => {
     requestAnimationFrame(() => {
       document.getElementById(`tab-${nextTab}`)?.focus();
     });
+  };
+
+  const activateTab = (nextTab: "today" | "town") => {
+    setLoadedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
+    setTab(nextTab);
   };
 
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: "today" | "town") => {
@@ -63,19 +76,19 @@ export default function HomePage() {
     event.preventDefault();
 
     if (event.key === "Home") {
-      setTab("today");
+      activateTab("today");
       focusTab("today");
       return;
     }
 
     if (event.key === "End") {
-      setTab("town");
+      activateTab("town");
       focusTab("town");
       return;
     }
 
     const nextTab = tab === "today" ? "town" : "today";
-    setTab(nextTab);
+    activateTab(nextTab);
     focusTab(nextTab);
   };
 
@@ -105,7 +118,7 @@ export default function HomePage() {
             aria-selected={currentTab === "today"}
             tabIndex={currentTab === "today" ? 0 : -1}
             className={`min-h-11 ${currentTab === "today" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
-            onClick={() => setTab("today")}
+            onClick={() => activateTab("today")}
             onKeyDown={(event) => handleTabKeyDown(event, "today")}
           >
             오늘
@@ -118,7 +131,7 @@ export default function HomePage() {
             aria-selected={currentTab === "town"}
             tabIndex={currentTab === "town" ? 0 : -1}
             className={`min-h-11 ${currentTab === "town" ? "bg-quest-primary text-white" : "bg-transparent shadow-none"}`}
-            onClick={() => setTab("town")}
+            onClick={() => activateTab("town")}
             onKeyDown={(event) => handleTabKeyDown(event, "town")}
           >
             타운
@@ -126,16 +139,13 @@ export default function HomePage() {
         </div>
       </Card>
 
-      <section id="tab-panel" className="outline-none">
-        {currentTab === "today" ? (
-          <div id="panel-today" role="tabpanel" aria-labelledby="tab-today" tabIndex={-1}>
-            <TodayView />
-          </div>
-        ) : (
-          <div id="panel-town" role="tabpanel" aria-labelledby="tab-town" tabIndex={-1}>
-            <MonthlyTownView />
-          </div>
-        )}
+      <section id="tab-panels" className="outline-none">
+        <div id="panel-today" role="tabpanel" aria-labelledby="tab-today" hidden={currentTab !== "today"} tabIndex={-1}>
+          {loadedTabs.today ? <TodayView /> : null}
+        </div>
+        <div id="panel-town" role="tabpanel" aria-labelledby="tab-town" hidden={currentTab !== "town"} tabIndex={-1}>
+          {loadedTabs.town ? <MonthlyTownView /> : null}
+        </div>
       </section>
     </main>
   );

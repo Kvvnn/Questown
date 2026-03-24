@@ -400,4 +400,48 @@ describe("questown store safeguards", () => {
     const nextQuests = useQuestownStore.getState().recordsByDate[nextDateKey]?.quests ?? [];
     expect(nextQuests.some((quest) => quest.title === "매일 운동")).toBe(true);
   });
+
+  it("reassigns duplicate imported recurrence keys so recurring quests do not collapse on rollover", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+
+    const result = useQuestownStore.getState().importBackup(
+      createBackupData(currentDateKey, {
+        [currentDateKey]: {
+          quests: [
+            {
+              id: "recurring-1",
+              title: "아침 산책",
+              type: "daily",
+              completed: false,
+              createdAt: "2026-03-25T00:00:00.000Z",
+              isRecurring: true,
+              recurrencePattern: "daily",
+              recurrenceKey: "shared-rk"
+            },
+            {
+              id: "recurring-2",
+              title: "물 마시기",
+              type: "daily",
+              completed: false,
+              createdAt: "2026-03-25T00:05:00.000Z",
+              isRecurring: true,
+              recurrencePattern: "daily",
+              recurrenceKey: "shared-rk"
+            }
+          ]
+        }
+      }) as never
+    );
+
+    expect(result.ok).toBe(true);
+
+    const importedQuests = useQuestownStore.getState().recordsByDate[currentDateKey]?.quests ?? [];
+    expect(new Set(importedQuests.map((quest) => quest.recurrenceKey)).size).toBe(2);
+
+    useQuestownStore.getState().goNextDayForDev();
+
+    const nextDateKey = useQuestownStore.getState().currentDateKey;
+    const nextQuests = useQuestownStore.getState().recordsByDate[nextDateKey]?.quests ?? [];
+    expect(nextQuests.map((quest) => quest.title)).toEqual(expect.arrayContaining(["아침 산책", "물 마시기"]));
+  });
 });

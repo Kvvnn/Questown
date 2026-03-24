@@ -169,6 +169,17 @@ const normalizeQuestId = (value: unknown, usedIds: Set<string>) => {
   return nextId;
 };
 
+const normalizeRecurringKey = (value: unknown, fallback: string, usedKeys: Set<string>) => {
+  let nextKey = normalizeNonEmptyString(value) ?? fallback;
+
+  while (usedKeys.has(nextKey)) {
+    nextKey = createQuestownId();
+  }
+
+  usedKeys.add(nextKey);
+  return nextKey;
+};
+
 const normalizeDependencyIds = (ids: unknown, selfId?: string) => {
   if (!Array.isArray(ids)) return undefined;
 
@@ -239,7 +250,8 @@ const normalizeQuest = (
   raw: unknown,
   dateKey: string,
   usedQuestIds: Set<string>,
-  availableQuestIds?: Set<string>
+  availableQuestIds?: Set<string>,
+  usedRecurringKeys?: Set<string>
 ): QuestItem | null => {
   if (!raw || typeof raw !== "object") return null;
 
@@ -264,7 +276,10 @@ const normalizeQuest = (
   const fallbackCreatedAt = dateKeyToDate(dateKey).toISOString();
   const createdAt = normalizeTimestamp(legacyQuest.createdAt, fallbackCreatedAt);
   const completedAt = completed ? normalizeTimestamp(legacyQuest.completedAt, createdAt) : undefined;
-  const recurrenceKey = normalizeNonEmptyString(legacyQuest.recurrenceKey) ?? id;
+  const recurrenceKey =
+    isRecurring && usedRecurringKeys
+      ? normalizeRecurringKey(legacyQuest.recurrenceKey, id, usedRecurringKeys)
+      : normalizeNonEmptyString(legacyQuest.recurrenceKey) ?? id;
 
   const quest: QuestItem = {
     id,
@@ -300,9 +315,10 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
 
   const source = Array.isArray(raw.quests) ? raw.quests : Array.isArray(raw.todos) ? raw.todos : [];
   const usedQuestIds = new Set<string>();
+  const usedRecurringKeys = new Set<string>();
 
   const initial = source
-    .map((quest) => normalizeQuest(quest, dateKey, usedQuestIds))
+    .map((quest) => normalizeQuest(quest, dateKey, usedQuestIds, undefined, usedRecurringKeys))
     .filter((quest): quest is QuestItem => Boolean(quest));
 
   const ids = new Set(initial.map((quest) => quest.id));

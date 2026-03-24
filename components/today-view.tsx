@@ -215,7 +215,13 @@ export function TodayView() {
   const isAddLocked = record.isFinalized;
 
   const isQuestTitleEmpty = titleInput.trim().length === 0;
-  const showQuestTitleError = hasTriedEmptySubmit && isQuestTitleEmpty;
+  const titleErrorMessage =
+    composerMessage?.tone === "error"
+      ? composerMessage.text
+      : hasTriedEmptySubmit && isQuestTitleEmpty
+        ? "퀘스트 제목을 입력해야 추가할 수 있어요."
+        : null;
+  const showQuestTitleError = Boolean(titleErrorMessage);
 
   const clearEventQueue = useCallback(() => {
     eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
@@ -889,8 +895,8 @@ export function TodayView() {
             </div>
 
             {showQuestTitleError ? (
-              <p id="quest-title-error" className="text-xs font-semibold text-rose-600">
-                퀘스트 제목을 입력해야 추가할 수 있어요.
+              <p id="quest-title-error" role="alert" className="text-xs font-semibold text-rose-600">
+                {titleErrorMessage}
               </p>
             ) : null}
 
@@ -1051,10 +1057,10 @@ export function TodayView() {
           </p>
         ) : null}
 
-        {composerMessage ? (
+        {composerMessage && composerMessage.tone !== "error" ? (
           <p
-            role={composerMessage.tone === "error" ? "alert" : "status"}
-            aria-live={composerMessage.tone === "error" ? "assertive" : "polite"}
+            role="status"
+            aria-live="polite"
             className={`mt-3 rounded-xl border px-3 py-2 text-sm font-semibold ${inlineStatusClass[composerMessage.tone]}`}
           >
             {composerMessage.text}
