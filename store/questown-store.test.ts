@@ -53,6 +53,27 @@ describe("questown store safeguards", () => {
     expect(result).toEqual({ ok: false, reason: "퀘스트를 찾을 수 없어요." });
   });
 
+  it("blocks deleting a quest that other quests still depend on", () => {
+    const addMain = useQuestownStore.getState().addQuest({ title: "선행 작업", type: "main" });
+    expect(addMain.ok).toBe(true);
+
+    const dateKey = useQuestownStore.getState().currentDateKey;
+    const mainQuestId = useQuestownStore
+      .getState()
+      .recordsByDate[dateKey].quests.find((quest) => quest.title === "선행 작업")?.id;
+    expect(mainQuestId).toBeTruthy();
+
+    const addSub = useQuestownStore
+      .getState()
+      .addQuest({ title: "후행 작업", type: "sub", dependencyQuestIds: [mainQuestId as string] });
+    expect(addSub.ok).toBe(true);
+
+    const result = useQuestownStore.getState().deleteQuest(mainQuestId as string);
+
+    expect(result).toEqual({ ok: false, reason: "후행 Quest를 먼저 정리하세요: 후행 작업" });
+    expect(useQuestownStore.getState().recordsByDate[dateKey]?.quests).toHaveLength(2);
+  });
+
   it("drops only the newly patched dependency when it would create a cycle", () => {
     const addMain = useQuestownStore.getState().addQuest({ title: "메인 작업", type: "main" });
     expect(addMain.ok).toBe(true);

@@ -1,4 +1,5 @@
 import { dateKeyToDate } from "./date";
+import { createQuestownId } from "./id";
 import { getQuestTitleKey } from "./quest";
 import { QuestItem, RecurrencePattern } from "./types";
 
@@ -67,7 +68,7 @@ export const createRecurringQuestCopy = (quest: QuestItem, targetDateKey: string
   const pattern = normalizeRecurrencePattern(quest.recurrencePattern, quest.isRecurring);
 
   return {
-    id: crypto.randomUUID(),
+    id: createQuestownId(),
     title: quest.title,
     type: quest.type,
     completed: false,
@@ -95,7 +96,7 @@ export const createCarryOverQuestCopy = (quest: QuestItem): QuestItem | null => 
   const nextCount = (quest.carryOverCount ?? 0) + 1;
 
   return {
-    id: crypto.randomUUID(),
+    id: createQuestownId(),
     title: quest.title,
     type: quest.type,
     completed: false,

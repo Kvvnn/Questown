@@ -18,6 +18,7 @@ import {
   getCompletedDependentIds,
   normalizeQuestPriority
 } from "@/domain/execution";
+import { createQuestownId } from "@/domain/id";
 import { getQuestCounts, getQuestTitleKey } from "@/domain/quest";
 import {
   createNextDayQuestCopies,
@@ -33,6 +34,7 @@ import {
   RecurrencePattern,
   TabType
 } from "@/domain/types";
+import { createSafeBrowserStorage } from "@/store/browser-storage";
 import { normalizeImportedRecordState } from "@/store/record-normalization";
 import { getMonthKeyFromDateKey, resolveSelectedTownDate, resolveTownMonth } from "./town-selection";
 
@@ -154,10 +156,10 @@ const normalizeTimestamp = (value: unknown, fallback: string) => {
 };
 
 const normalizeQuestId = (value: unknown, usedIds: Set<string>) => {
-  let nextId = normalizeNonEmptyString(value) ?? crypto.randomUUID();
+  let nextId = normalizeNonEmptyString(value) ?? createQuestownId();
 
   while (usedIds.has(nextId)) {
-    nextId = crypto.randomUUID();
+    nextId = createQuestownId();
   }
 
   usedIds.add(nextId);
@@ -460,7 +462,7 @@ export const useQuestownStore = create<QuestownState>()(
             quests: [
               ...today.quests,
               {
-                id: crypto.randomUUID(),
+                id: createQuestownId(),
                 title: trimmed,
                 type,
                 completed: false,
@@ -470,7 +472,7 @@ export const useQuestownStore = create<QuestownState>()(
                 focusPinned: false,
                 isRecurring,
                 recurrencePattern: pattern,
-                recurrenceKey: isRecurring ? crypto.randomUUID() : undefined,
+                recurrenceKey: isRecurring ? createQuestownId() : undefined,
                 recurrenceAnchorDate: isRecurring ? dateKey : undefined,
                 recurrenceIntervalDays: intervalDays,
                 carryOverEnabled,
@@ -603,6 +605,16 @@ export const useQuestownStore = create<QuestownState>()(
         if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 삭제할 수 없어요." };
         if (!today.quests.some((quest) => quest.id === questId)) {
           return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
+        }
+
+        const dependentTitles = today.quests
+          .filter((quest) => (quest.dependencyQuestIds ?? []).includes(questId))
+          .map((quest) => quest.title);
+
+        if (dependentTitles.length > 0) {
+          const preview = dependentTitles.slice(0, 2).join(", ");
+          const suffix = dependentTitles.length > 2 ? ` 외 ${dependentTitles.length - 2}개` : "";
+          return { ok: false, reason: `후행 Quest를 먼저 정리하세요: ${preview}${suffix}` };
         }
 
         const nextQuests = today.quests
@@ -776,7 +788,7 @@ export const useQuestownStore = create<QuestownState>()(
     {
       name: "questown-mvp-storage",
       version: 6,
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(() => createSafeBrowserStorage()),
       migrate: (persistedState: unknown) => {
         const state = (persistedState ?? {}) as Partial<QuestownState> & {
           recordsByDate?: Record<string, LegacyRecordLike>;
