@@ -2,6 +2,7 @@ import { dateKeyToDate } from "./date";
 import { QuestItem, RecurrencePattern } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const validRecurrencePatterns = new Set<RecurrencePattern>(["none", "daily", "weekdays", "weekly", "interval"]);
 
 const normalizeDateDiff = (fromDateKey: string, toDateKey: string) => {
   const from = dateKeyToDate(fromDateKey).getTime();
@@ -15,7 +16,7 @@ export const normalizeRecurrencePattern = (
   pattern: RecurrencePattern | undefined,
   isRecurring: boolean | undefined
 ): RecurrencePattern => {
-  if (pattern) return pattern;
+  if (pattern && validRecurrencePatterns.has(pattern)) return pattern;
   return isRecurring ? "daily" : "none";
 };
 

@@ -4,7 +4,8 @@ import {
   createCarryOverQuestCopy,
   createRecurringQuestCopy,
   isRecurringDueOnDate,
-  mergeGeneratedQuests
+  mergeGeneratedQuests,
+  normalizeRecurrencePattern
 } from "./recurrence";
 import { QuestItem } from "./types";
 
@@ -40,6 +41,12 @@ const baseQuest: QuestItem = {
 };
 
 describe("recurrence utils", () => {
+  it("falls back to supported recurrence patterns only", () => {
+    expect(normalizeRecurrencePattern("daily", false)).toBe("daily");
+    expect(normalizeRecurrencePattern("monthly" as never, true)).toBe("daily");
+    expect(normalizeRecurrencePattern("monthly" as never, false)).toBe("none");
+  });
+
   it("checks recurrence due correctly", () => {
     expect(isRecurringDueOnDate(baseQuest, "2026-03-25")).toBe(true);
     expect(isRecurringDueOnDate(baseQuest, "2026-03-24")).toBe(false);

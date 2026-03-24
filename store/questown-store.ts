@@ -4,7 +4,11 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
 import { addDays, addMonths, ensureDailyRecord, getDaysInMonth, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
-import { getBlockedDependencyIds, getCompletedDependentIds, normalizeQuestPriority } from "@/domain/execution";
+import {
+  getBlockedDependencyIds,
+  getCompletedDependentIds,
+  normalizeQuestPriority
+} from "@/domain/execution";
 import { getQuestCounts } from "@/domain/quest";
 import {
   createCarryOverQuestCopy,
@@ -23,6 +27,7 @@ import {
   RecurrencePattern,
   TabType
 } from "@/domain/types";
+import { normalizeImportedRecordState } from "@/store/record-normalization";
 
 const MAX_QUEST_TITLE_LENGTH = 80;
 const monthKeyFromDateKey = (dateKey: string) => dateKey.slice(0, 7);
@@ -200,16 +205,18 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
     .filter((quest): quest is QuestItem => Boolean(quest));
 
   const ids = new Set(initial.map((quest) => quest.id));
-  const quests = initial.map((quest) => ({
-    ...quest,
-    dependencyQuestIds: sanitizeDependencyIds(quest.dependencyQuestIds, ids, quest.id)
-  }));
+  const normalizedRecordState = normalizeImportedRecordState(
+    dateKey,
+    initial.map((quest) => ({
+      ...quest,
+      dependencyQuestIds: sanitizeDependencyIds(quest.dependencyQuestIds, ids, quest.id)
+    }))
+  );
 
   return recalc(
     {
       ...base,
-      date: isDateKey(raw.date) ? raw.date : dateKey,
-      quests,
+      ...normalizedRecordState,
       isFinalized: Boolean(raw.isFinalized)
     },
     Boolean(raw.isFinalized)

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getCompletedDependentIds, getExecutionQueue, getFocusQuestIds, getWeeklyMainProgress } from "./execution";
+import {
+  getCompletedDependentIds,
+  getExecutionQueue,
+  getFocusQuestIds,
+  getWeeklyMainProgress,
+  sanitizeQuestDependencies
+} from "./execution";
 import { DailyRecord, QuestItem } from "./types";
 
 const q = (overrides: Partial<QuestItem>): QuestItem => ({
@@ -59,6 +65,18 @@ describe("execution utils", () => {
 
     const questMap = new Map(quests.map((quest) => [quest.id, quest] as const));
     expect(getCompletedDependentIds("a", questMap).sort()).toEqual(["c", "d"]);
+  });
+
+  it("removes invalid and cyclic dependency links from imported quests", () => {
+    const quests = sanitizeQuestDependencies([
+      q({ id: "a", dependencyQuestIds: ["missing", "b", "b"] }),
+      q({ id: "b", dependencyQuestIds: ["c"] }),
+      q({ id: "c", dependencyQuestIds: ["a", "c"] })
+    ]);
+
+    expect(quests[0].dependencyQuestIds).toEqual(["b"]);
+    expect(quests[1].dependencyQuestIds).toEqual(["c"]);
+    expect(quests[2].dependencyQuestIds).toBeUndefined();
   });
 
   it("computes weekly main progress", () => {

@@ -39,6 +39,53 @@ export const getBlockedDependencyIds = (quest: QuestItem, questMap: Map<string, 
   });
 };
 
+export const sanitizeQuestDependencies = (quests: QuestItem[]) => {
+  const questIds = new Set(quests.map((quest) => quest.id));
+  const rawDeps = new Map(
+    quests.map((quest) => [
+      quest.id,
+      Array.from(
+        new Set(
+          (quest.dependencyQuestIds ?? []).filter((dependencyId) => dependencyId !== quest.id && questIds.has(dependencyId))
+        )
+      )
+    ] as const)
+  );
+  const cleanedDeps = new Map<string, string[]>();
+  const visitState = new Map<string, "visiting" | "visited">();
+
+  const visit = (questId: string) => {
+    const state = visitState.get(questId);
+    if (state === "visited") return cleanedDeps.get(questId) ?? [];
+    if (state === "visiting") return [];
+
+    visitState.set(questId, "visiting");
+
+    const nextDeps: string[] = [];
+    for (const dependencyId of rawDeps.get(questId) ?? []) {
+      if (visitState.get(dependencyId) === "visiting") continue;
+      visit(dependencyId);
+      nextDeps.push(dependencyId);
+    }
+
+    cleanedDeps.set(questId, nextDeps);
+    visitState.set(questId, "visited");
+    return nextDeps;
+  };
+
+  quests.forEach((quest) => {
+    visit(quest.id);
+  });
+
+  return quests.map((quest) => {
+    const dependencyQuestIds = cleanedDeps.get(quest.id) ?? [];
+    return {
+      ...quest,
+      dependencyQuestIds: dependencyQuestIds.length > 0 ? dependencyQuestIds : undefined
+    };
+  });
+};
+
 export const getCompletedDependentIds = (questId: string, questMap: Map<string, QuestItem>) => {
   const visited = new Set<string>([questId]);
   const queue = [questId];
