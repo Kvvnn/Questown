@@ -530,8 +530,11 @@ export function TodayView() {
     <div className="space-y-4" id="today-panel-content">
       <RewardToasts toasts={toasts} />
 
-      <div ref={buildingPanelRef} className="sticky top-2 z-20">
-        <Card className="relative overflow-hidden" aria-labelledby="today-title">
+      <div
+        ref={buildingPanelRef}
+        className="sticky top-2 z-20 h-[32vh] min-h-[170px] max-h-[240px] overflow-y-auto rounded-3xl"
+      >
+        <Card className="relative overflow-hidden p-3" aria-labelledby="today-title">
         <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
 
         <div className="mb-3 flex items-center justify-between gap-2">
