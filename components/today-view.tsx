@@ -84,6 +84,7 @@ export function TodayView() {
   const [isRecurrenceAutoSelected, setIsRecurrenceAutoSelected] = useState(false);
   const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(2);
   const [carryOverEnabled, setCarryOverEnabled] = useState(true);
+  const [isCarryOverAutoSelected, setIsCarryOverAutoSelected] = useState(true);
   const [carryOverLimit, setCarryOverLimit] = useState(3);
   const [message, setMessage] = useState<{ text: string; tone: InlineStatusTone } | null>(null);
   const [toasts, setToasts] = useState<RewardToastItem[]>([]);
@@ -163,6 +164,10 @@ export function TodayView() {
   const visibleExecutionQueue = useMemo(
     () => (focusMode ? executionQueue.filter((item) => focusQuestIds.has(item.quest.id)) : executionQueue),
     [executionQueue, focusMode, focusQuestIds]
+  );
+  const allRemainingBlocked = useMemo(
+    () => executionQueue.length > 0 && executionQueue.every((item) => item.blockedByIds.length > 0),
+    [executionQueue]
   );
   const completedQuests = useMemo(
     () =>
@@ -353,6 +358,10 @@ export function TodayView() {
 
     if (type === "main" && !carryOverEnabled) {
       setCarryOverEnabled(true);
+      setIsCarryOverAutoSelected(true);
+    } else if (type !== "main" && carryOverEnabled && isCarryOverAutoSelected) {
+      setCarryOverEnabled(false);
+      setIsCarryOverAutoSelected(false);
     }
   };
 
@@ -414,6 +423,7 @@ export function TodayView() {
 
   const onCarryOverEnabledChange = (e: ChangeEvent<HTMLInputElement>) => {
     clearComposerFeedback();
+    setIsCarryOverAutoSelected(false);
     setCarryOverEnabled(e.target.checked);
   };
 
@@ -456,7 +466,15 @@ export function TodayView() {
 
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as AppBackupData;
+      let parsed: AppBackupData;
+
+      try {
+        parsed = JSON.parse(text) as AppBackupData;
+      } catch {
+        showMessage("JSON 형식이 올바르지 않아요.", "error");
+        return;
+      }
+
       skipNextRewardRef.current = true;
       const result = importBackup(parsed);
       if (!result.ok) {
@@ -465,7 +483,7 @@ export function TodayView() {
       showMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.", result.ok ? "success" : "error");
     } catch {
       skipNextRewardRef.current = false;
-      showMessage("JSON 파일을 읽지 못했어요.", "error");
+      showMessage("백업 파일을 읽지 못했어요.", "error");
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -759,15 +777,19 @@ export function TodayView() {
           <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-sm text-slate-500">
             {record.totalCount === 0
               ? "오늘 첫 퀘스트를 아래에서 추가해 보세요."
-              : focusMode
+              : executionQueue.length === 0
+                ? "오늘 등록한 퀘스트를 모두 완료했어요. 아래에서 하루를 마감해 보세요."
+                : allRemainingBlocked
+                  ? "지금 남은 퀘스트는 모두 선행 조건으로 막혀 있어요. \"선행 필요\"가 보이는 항목부터 풀어 보세요."
+                  : focusMode
                 ? "집중 모드 기준으로 지금 볼 퀘스트가 없어요. 실행 가이드에서 집중 모드를 꺼보세요."
-                : "오늘 등록한 퀘스트를 모두 완료했어요. 아래에서 하루를 마감해 보세요."}
+                : "지금 바로 실행할 수 있는 퀘스트가 없어요."}
           </div>
         ) : (
           <ul className="space-y-2">{visibleExecutionQueue.map((item) => renderQuestItem(item.quest, { showTypeBadge: true }))}</ul>
         )}
 
-        {visibleExecutionQueue.length > 0 && visibleExecutionQueue.every((item) => item.blockedByIds.length > 0) ? (
+        {visibleExecutionQueue.length > 0 && allRemainingBlocked ? (
           <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
             모든 남은 퀘스트가 선행 조건으로 막혀 있어요. &quot;선행 필요&quot;가 보이는 항목부터 풀어 보세요.
           </p>
@@ -1140,7 +1162,7 @@ export function TodayView() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="application/json"
+                accept=".json,application/json"
                 className="hidden"
                 onChange={onBackupImport}
               />

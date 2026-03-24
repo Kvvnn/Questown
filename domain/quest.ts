@@ -20,6 +20,11 @@ export const questTypeShortLabel: Record<QuestType, string> = {
   sub: "서브"
 };
 
+const normalizeQuestTitle = (title: string) => title.trim().replace(/\s+/g, " ").toLowerCase();
+
+export const getQuestTitleKey = (quest: Pick<QuestItem, "title" | "type">) =>
+  `${quest.type}::${normalizeQuestTitle(quest.title)}`;
+
 export const getQuestCounts = (quests: QuestItem[]) => {
   const totalByType = emptyQuestTypeCounter();
   const completedByType = emptyQuestTypeCounter();

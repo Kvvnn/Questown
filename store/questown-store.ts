@@ -9,7 +9,7 @@ import {
   getCompletedDependentIds,
   normalizeQuestPriority
 } from "@/domain/execution";
-import { getQuestCounts } from "@/domain/quest";
+import { getQuestCounts, getQuestTitleKey } from "@/domain/quest";
 import {
   createNextDayQuestCopies,
   mergeGeneratedQuests,
@@ -375,7 +375,8 @@ export const useQuestownStore = create<QuestownState>()(
         const today = getRecord(get().recordsByDate, dateKey);
         if (today.isFinalized) return { ok: false, reason: "이미 마감된 날짜는 수정할 수 없어요." };
 
-        if (today.quests.some((quest) => quest.type === type && quest.title === trimmed)) {
+        const nextTitleKey = getQuestTitleKey({ title: trimmed, type });
+        if (today.quests.some((quest) => getQuestTitleKey(quest) === nextTitleKey)) {
           return { ok: false, reason: "같은 타입에 동일한 퀘스트가 이미 있어요." };
         }
 

@@ -105,6 +105,24 @@ describe("recurrence utils", () => {
     expect(merged).toHaveLength(1);
   });
 
+  it("skips generated quests when the target day already has the same title and type", () => {
+    const existing: QuestItem[] = [
+      {
+        id: "manual",
+        title: "운동",
+        type: "daily",
+        completed: false,
+        createdAt: "2026-03-25T00:00:00.000Z"
+      }
+    ];
+
+    const generated = [createRecurringQuestCopy(baseQuest, "2026-03-25")];
+
+    const merged = mergeGeneratedQuests(existing, generated);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe("manual");
+  });
+
   it("keeps recurring carry-over quests to a single next-day copy", () => {
     const generated = createNextDayQuestCopies(baseQuest, "2026-03-25");
 

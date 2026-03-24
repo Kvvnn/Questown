@@ -29,12 +29,14 @@ export const getPreferredTownDate = ({
   const currentDay = getDayFromDate(currentDate, monthKey);
   if (currentDay) return toDateFromDay(monthKey, clamp(currentDay, 1, dayCount));
 
-  const recordedDate = availableDates
+  const recordedDates = availableDates
     .filter((date) => {
       const day = getDayFromDate(date, monthKey);
       return day !== null && day <= dayCount;
     })
-    .sort()[0];
+    .sort();
+
+  const recordedDate = recordedDates[recordedDates.length - 1];
 
   return recordedDate ?? toDateFromDay(monthKey, 1);
 };

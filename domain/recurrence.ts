@@ -1,4 +1,5 @@
 import { dateKeyToDate } from "./date";
+import { getQuestTitleKey } from "./quest";
 import { QuestItem, RecurrencePattern } from "./types";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -126,21 +127,21 @@ export const createNextDayQuestCopies = (quest: QuestItem, targetDateKey: string
   return [carryOverCopy, recurringCopy].filter((item): item is QuestItem => Boolean(item));
 };
 
-const toTitleKey = (quest: Pick<QuestItem, "title" | "type">) => `${quest.type}::${quest.title.trim().toLowerCase()}`;
-
 export const mergeGeneratedQuests = (existing: QuestItem[], generated: QuestItem[]) => {
   const recurrenceKeys = new Set(existing.map((quest) => quest.recurrenceKey).filter(Boolean));
   const carryOverSources = new Set(existing.map((quest) => quest.carryOverSourceQuestId).filter(Boolean));
-  const titleKeys = new Set(existing.map((quest) => toTitleKey(quest)));
+  const titleKeys = new Set(existing.map((quest) => getQuestTitleKey(quest)));
 
   const next = [...existing];
 
   generated.forEach((quest) => {
+    const titleKey = getQuestTitleKey(quest);
+
+    // Avoid surfacing the same quest twice when the target day already contains
+    // a manually added or restored quest with the same title/type.
+    if (titleKeys.has(titleKey)) return;
     if (quest.recurrenceKey && recurrenceKeys.has(quest.recurrenceKey)) return;
     if (quest.carryOverSourceQuestId && carryOverSources.has(quest.carryOverSourceQuestId)) return;
-
-    const titleKey = toTitleKey(quest);
-    if (!quest.recurrenceKey && !quest.carryOverSourceQuestId && titleKeys.has(titleKey)) return;
 
     next.push(quest);
     if (quest.recurrenceKey) recurrenceKeys.add(quest.recurrenceKey);

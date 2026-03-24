@@ -54,7 +54,7 @@ describe("town navigation", () => {
     ).toBe("2026-02-28");
   });
 
-  it("falls back to the current date, then the first recorded date, then day one", () => {
+  it("falls back to the current date, then the latest recorded date, then day one", () => {
     expect(
       getPreferredTownDate({
         monthKey: "2026-03",
@@ -73,7 +73,7 @@ describe("town navigation", () => {
         selectedDate: "2026-02-20",
         availableDates: ["2026-03-08", "2026-03-03"]
       })
-    ).toBe("2026-03-03");
+    ).toBe("2026-03-08");
 
     expect(
       getPreferredTownDate({

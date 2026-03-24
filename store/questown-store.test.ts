@@ -70,4 +70,12 @@ describe("questown store safeguards", () => {
     expect(quests.find((quest) => quest.id === mainQuestId)?.dependencyQuestIds).toBeUndefined();
     expect(quests.find((quest) => quest.id === subQuestId)?.dependencyQuestIds).toEqual([mainQuestId]);
   });
+
+  it("rejects duplicate titles that only differ by case or extra spaces", () => {
+    const first = useQuestownStore.getState().addQuest({ title: "Read   Book", type: "main" });
+    expect(first.ok).toBe(true);
+
+    const second = useQuestownStore.getState().addQuest({ title: "  read book  ", type: "main" });
+    expect(second).toEqual({ ok: false, reason: "같은 타입에 동일한 퀘스트가 이미 있어요." });
+  });
 });
