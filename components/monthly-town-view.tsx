@@ -205,6 +205,8 @@ export function MonthlyTownView() {
 
   const dayCount = getDaysInMonth(selectedMonth);
   const layout = useMemo(() => createTownLayout(selectedMonth, dayCount), [selectedMonth, dayCount]);
+  const currentMonthKey = currentDateKey.slice(0, 7);
+  const canMoveToNextMonth = selectedMonth < currentMonthKey;
 
   const [cameraNudge, setCameraNudge] = useState({ x: 0, y: 0 });
 
@@ -311,7 +313,14 @@ export function MonthlyTownView() {
             <Button type="button" className="min-h-11 bg-slate-100" onClick={() => moveMonth(-1)} aria-label="이전 달 보기">
               이전 달
             </Button>
-            <Button type="button" className="min-h-11 bg-slate-100" onClick={() => moveMonth(1)} aria-label="다음 달 보기">
+            <Button
+              type="button"
+              className="min-h-11 bg-slate-100"
+              onClick={() => moveMonth(1)}
+              aria-label="다음 달 보기"
+              title={canMoveToNextMonth ? "다음 달 보기" : "현재 달까지만 이동할 수 있어요."}
+              disabled={!canMoveToNextMonth}
+            >
               다음 달
             </Button>
           </div>
@@ -471,42 +480,88 @@ export function MonthlyTownView() {
         {!activeSelectedDate ? (
           <p className="text-sm text-slate-500">타운에서 건물을 선택하면 상세를 보여줍니다.</p>
         ) : !selectedRecord ? (
-          <div className="space-y-1 text-sm text-slate-600">
-            <p>날짜: {activeSelectedDate}</p>
-            <p>{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-4 text-sm text-slate-600">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">선택 날짜</p>
+            <p className="mt-1 text-base font-black text-slate-800">{activeSelectedDate}</p>
+            <p className="mt-2 leading-relaxed">{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
           </div>
         ) : (
-          <div className="space-y-3 text-sm">
-            <p>날짜: {selectedRecord.date}</p>
-            <p>
-              완료: {selectedRecord.completedCount}/{selectedRecord.totalCount} (
-              {Math.round(selectedRecord.completionRate * 100)}%)
-            </p>
-            <p>지붕: {roofTypeLabel[selectedRecord.roofType]}</p>
-            <p>상태: {selectedRecord.isFinalized ? "마감됨" : "진행 중"}</p>
-
-            <div className="grid grid-cols-3 gap-2">
-              {questTypeOrder.map((type) => {
-                const visual = getFloorVisualStyle(type);
-                return (
-                  <div key={type} className={`rounded-xl px-2 py-2 text-center text-xs font-bold ${visual.badgeClass}`}>
-                    {questTypeShortLabel[type]} {selectedRecord.completedByType[type]}/{selectedRecord.totalByType[type]}
-                  </div>
-                );
-              })}
+          <div className="space-y-4 text-sm">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <div className="metric-pill text-left">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">날짜</p>
+                <p className="mt-1 text-sm font-black text-slate-800">{selectedRecord.date}</p>
+              </div>
+              <div className="metric-pill text-left">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">완료</p>
+                <p className="mt-1 text-sm font-black text-slate-800">
+                  {selectedRecord.completedCount}/{selectedRecord.totalCount}
+                </p>
+              </div>
+              <div className="metric-pill text-left">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">완료율</p>
+                <p className="mt-1 text-sm font-black text-slate-800">
+                  {Math.round(selectedRecord.completionRate * 100)}%
+                </p>
+              </div>
+              <div className="metric-pill text-left">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">지붕 / 상태</p>
+                <p className="mt-1 text-sm font-black text-slate-800">
+                  {roofTypeLabel[selectedRecord.roofType]} · {selectedRecord.isFinalized ? "마감됨" : "진행 중"}
+                </p>
+              </div>
             </div>
 
-            {selectedRecord.quests.length === 0 ? (
-              <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-500">등록된 퀘스트가 없어요.</p>
-            ) : (
-              <ul className="list-disc space-y-1 pl-4">
-                {selectedRecord.quests.map((quest) => (
-                  <li key={quest.id}>
-                    {quest.completed ? "✅" : "⬜"} [{questTypeShortLabel[quest.type]}] {quest.title}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <div>
+              <h4 className="mb-2 text-sm font-bold text-slate-700">타입별 진행</h4>
+              <div className="grid grid-cols-3 gap-2">
+                {questTypeOrder.map((type) => {
+                  const visual = getFloorVisualStyle(type);
+                  return (
+                    <div key={type} className={`rounded-xl px-2 py-2 text-center text-xs font-bold ${visual.badgeClass}`}>
+                      {questTypeShortLabel[type]} {selectedRecord.completedByType[type]}/{selectedRecord.totalByType[type]}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h4 className="text-sm font-bold text-slate-700">퀘스트 목록</h4>
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
+                  {selectedRecord.quests.length}개
+                </span>
+              </div>
+
+              {selectedRecord.quests.length === 0 ? (
+                <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-500">등록된 퀘스트가 없어요.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {selectedRecord.quests.map((quest) => {
+                    const visual = getFloorVisualStyle(quest.type);
+                    return (
+                      <li
+                        key={quest.id}
+                        className="flex items-start gap-2 rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 shadow-sm"
+                      >
+                        <span className="mt-0.5 text-sm">{quest.completed ? "✅" : "⬜"}</span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${visual.badgeClass}`}>
+                              {questTypeShortLabel[quest.type]}
+                            </span>
+                            <span className={`text-sm ${quest.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
+                              {quest.title}
+                            </span>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           </div>
         )}
       </Card>

@@ -121,6 +121,10 @@ export function TodayView() {
   const showMessage = useCallback((text: string, tone: InlineStatusTone = "info") => {
     setMessage({ text, tone });
   }, []);
+  const clearComposerFeedback = () => {
+    setHasTriedEmptySubmit(false);
+    setMessage(null);
+  };
 
   const percent = Math.round(record.completionRate * 100);
   const streak = useMemo(
@@ -334,6 +338,7 @@ export function TodayView() {
   }, [dependencyCandidates, selectedDependencyQuestId]);
 
   const handleSelectType = (type: QuestType) => {
+    clearComposerFeedback();
     setSelectedType(type);
     setSelectedPriority(normalizeQuestPriority(undefined, type));
 
@@ -374,6 +379,10 @@ export function TodayView() {
 
     if (!result.ok) {
       showMessage(result.reason ?? "추가에 실패했어요.", "error");
+      titleInputRef.current?.focus();
+      if (trimmedTitle) {
+        titleInputRef.current?.select();
+      }
       return;
     }
 
@@ -393,6 +402,7 @@ export function TodayView() {
   };
 
   const onRecurrencePatternChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    clearComposerFeedback();
     const value = e.target.value as RecurrencePattern;
     setRecurrencePattern(value);
     setIsRecurrenceAutoSelected(false);
@@ -402,10 +412,12 @@ export function TodayView() {
   };
 
   const onCarryOverEnabledChange = (e: ChangeEvent<HTMLInputElement>) => {
+    clearComposerFeedback();
     setCarryOverEnabled(e.target.checked);
   };
 
   const onCarryOverLimitChange = (e: ChangeEvent<HTMLInputElement>) => {
+    clearComposerFeedback();
     const next = Math.max(1, Math.min(14, Math.round(Number(e.target.value) || 1)));
     setCarryOverLimit(next);
   };
@@ -792,9 +804,8 @@ export function TodayView() {
                 onChange={(e) => {
                   const nextTitle = e.target.value;
                   setTitleInput(nextTitle);
-                  if (hasTriedEmptySubmit && nextTitle.trim().length > 0) {
-                    setHasTriedEmptySubmit(false);
-                    setMessage(null);
+                  if (hasTriedEmptySubmit || message) {
+                    clearComposerFeedback();
                   }
                 }}
                 placeholder="예: 오늘 편집본 완성"
@@ -856,7 +867,10 @@ export function TodayView() {
                         key={priority}
                         type="button"
                         aria-pressed={active}
-                        onClick={() => setSelectedPriority(priority)}
+                        onClick={() => {
+                          clearComposerFeedback();
+                          setSelectedPriority(priority);
+                        }}
                         className={`min-h-10 rounded-xl border px-2 py-1 text-xs font-bold transition ${
                           active
                             ? `${priorityButtonClass[priority]} ring-2 ring-offset-1 ring-slate-200`
@@ -873,7 +887,10 @@ export function TodayView() {
                   <label className="mb-1 block text-xs font-semibold text-slate-600">선행 퀘스트 (선택)</label>
                   <select
                     value={selectedDependencyQuestId}
-                    onChange={(e) => setSelectedDependencyQuestId(e.target.value)}
+                    onChange={(e) => {
+                      clearComposerFeedback();
+                      setSelectedDependencyQuestId(e.target.value);
+                    }}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"
                     aria-label="선행 퀘스트 선택"
                   >
@@ -910,7 +927,10 @@ export function TodayView() {
                       min={1}
                       max={14}
                       value={recurrenceIntervalDays}
-                      onChange={(e) => setRecurrenceIntervalDays(Math.max(1, Number(e.target.value) || 1))}
+                      onChange={(e) => {
+                        clearComposerFeedback();
+                        setRecurrenceIntervalDays(Math.max(1, Number(e.target.value) || 1));
+                      }}
                       className="w-full accent-indigo-500"
                       aria-label="반복 간격 일수 설정"
                     />
