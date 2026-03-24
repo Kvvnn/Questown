@@ -110,18 +110,24 @@ const normalizePositiveInt = (value: unknown, fallback: number, min: number, max
   return Math.min(max, Math.max(min, Math.round(n)));
 };
 
-const sanitizeDependencyIds = (ids: unknown, availableQuestIds: Set<string>, selfId?: string) => {
+const normalizeDependencyIds = (ids: unknown, selfId?: string) => {
   if (!Array.isArray(ids)) return undefined;
 
   const cleaned = Array.from(
     new Set(
       ids
         .filter((value): value is string => typeof value === "string")
-        .filter((value) => value !== selfId && availableQuestIds.has(value))
+        .filter((value) => value !== selfId)
     )
   );
 
   return cleaned.length > 0 ? cleaned : undefined;
+};
+
+const sanitizeDependencyIds = (ids: unknown, availableQuestIds: Set<string>, selfId?: string) => {
+  const cleaned = normalizeDependencyIds(ids, selfId)?.filter((value) => availableQuestIds.has(value));
+
+  return cleaned && cleaned.length > 0 ? cleaned : undefined;
 };
 
 const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
@@ -166,7 +172,9 @@ const normalizeQuest = (raw: LegacyQuestLike, dateKey: string, availableQuestIds
     completedAt: raw.completed ? raw.completedAt ?? new Date().toISOString() : undefined,
     priority: normalizeQuestPriority(raw.priority as QuestPriority | undefined, type),
     focusPinned: Boolean(raw.focusPinned),
-    dependencyQuestIds: sanitizeDependencyIds(raw.dependencyQuestIds, availableQuestIds ?? new Set(), id),
+    dependencyQuestIds: availableQuestIds
+      ? sanitizeDependencyIds(raw.dependencyQuestIds, availableQuestIds, id)
+      : normalizeDependencyIds(raw.dependencyQuestIds, id),
     isRecurring,
     recurrencePattern: pattern,
     recurrenceKey: isRecurring ? raw.recurrenceKey ?? raw.id ?? crypto.randomUUID() : undefined,
@@ -289,6 +297,27 @@ const rollForwardRecords = (
   }
 
   return records;
+};
+
+const syncStateToToday = (recordsByDate: Record<string, DailyRecord>, candidateDateKey: string) => {
+  const todayKey = toDateKey();
+
+  if (candidateDateKey < todayKey) {
+    return {
+      currentDateKey: todayKey,
+      recordsByDate: rollForwardRecords(recordsByDate, candidateDateKey, todayKey)
+    };
+  }
+
+  const todayRecord = getRecord(recordsByDate, todayKey);
+
+  return {
+    currentDateKey: todayKey,
+    recordsByDate: {
+      ...recordsByDate,
+      [todayKey]: recalc(todayRecord, todayRecord.isFinalized)
+    }
+  };
 };
 
 export const useQuestownStore = create<QuestownState>()(
@@ -584,65 +613,43 @@ export const useQuestownStore = create<QuestownState>()(
       selectDateInTown: (date) => set({ selectedDateInTown: date }),
 
       hydrateToday: () => {
-        const actualTodayKey = toDateKey();
-        const activeDateKey = get().currentDateKey || actualTodayKey;
+        const fallbackDateKey = toDateKey();
+        const activeDateKey = isDateKey(get().currentDateKey) ? get().currentDateKey : fallbackDateKey;
+        const synced = syncStateToToday(get().recordsByDate, activeDateKey);
+        const selectedMonth = monthKeyFromDateKey(synced.currentDateKey);
 
-        if (activeDateKey < actualTodayKey) {
-          const rolled = rollForwardRecords(get().recordsByDate, activeDateKey, actualTodayKey);
-          const selectedMonth = toMonthKey();
-          set({
-            currentDateKey: actualTodayKey,
-            selectedMonth,
-            recordsByDate: rolled,
-            selectedDateInTown: resolveSelectedTownDate(
-              selectedMonth,
-              actualTodayKey,
-              get().selectedDateInTown,
-              rolled
-            )
-          });
-          return;
-        }
-
-        const current = getRecord(get().recordsByDate, activeDateKey);
-        const selectedMonth = monthKeyFromDateKey(activeDateKey);
         set((state) => ({
-          currentDateKey: activeDateKey,
+          currentDateKey: synced.currentDateKey,
           selectedMonth,
-          recordsByDate: {
-            ...state.recordsByDate,
-            [activeDateKey]: recalc(current, current.isFinalized)
-          },
+          recordsByDate: synced.recordsByDate,
           selectedDateInTown: resolveSelectedTownDate(
             selectedMonth,
-            activeDateKey,
+            synced.currentDateKey,
             state.selectedDateInTown,
-            {
-              ...state.recordsByDate,
-              [activeDateKey]: recalc(current, current.isFinalized)
-            }
+            synced.recordsByDate
           )
         }));
       },
 
       rolloverToToday: () => {
-        const todayKey = toDateKey();
         const currentKey = get().currentDateKey;
+        const todayKey = toDateKey();
 
-        if (currentKey >= todayKey) return;
+        if (currentKey === todayKey) return;
 
-        const rolled = rollForwardRecords(get().recordsByDate, currentKey, todayKey);
-        const selectedMonth = monthKeyFromDateKey(todayKey);
+        const activeDateKey = isDateKey(currentKey) ? currentKey : todayKey;
+        const synced = syncStateToToday(get().recordsByDate, activeDateKey);
+        const selectedMonth = monthKeyFromDateKey(synced.currentDateKey);
 
         set({
-          currentDateKey: todayKey,
+          currentDateKey: synced.currentDateKey,
           selectedMonth,
-          recordsByDate: rolled,
+          recordsByDate: synced.recordsByDate,
           selectedDateInTown: resolveSelectedTownDate(
             selectedMonth,
-            todayKey,
+            synced.currentDateKey,
             get().selectedDateInTown,
-            rolled
+            synced.recordsByDate
           )
         });
       },
@@ -666,15 +673,16 @@ export const useQuestownStore = create<QuestownState>()(
 
         const nextDate = isDateKey(data.state.currentDateKey) ? data.state.currentDateKey : toDateKey();
         const normalizedRecords = normalizeRecordsByDate(data.state.recordsByDate as Record<string, LegacyRecordLike>);
-        const selectedMonth = isMonthKey(data.state.selectedMonth) ? data.state.selectedMonth : monthKeyFromDateKey(nextDate);
+        const synced = syncStateToToday(normalizedRecords, nextDate);
+        const selectedMonth = monthKeyFromDateKey(synced.currentDateKey);
 
         set({
-          currentDateKey: nextDate,
+          currentDateKey: synced.currentDateKey,
           selectedMonth,
           dailyGoal: normalizePositiveInt((data.state as { dailyGoal?: number }).dailyGoal, 3, 1, 10),
           weeklyMainTarget: normalizePositiveInt((data.state as { weeklyMainTarget?: number }).weeklyMainTarget, 10, 1, 50),
-          recordsByDate: normalizedRecords,
-          selectedDateInTown: resolveSelectedTownDate(selectedMonth, nextDate, undefined, normalizedRecords)
+          recordsByDate: synced.recordsByDate,
+          selectedDateInTown: resolveSelectedTownDate(selectedMonth, synced.currentDateKey, undefined, synced.recordsByDate)
         });
 
         return { ok: true };
