@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "tsc --noEmit --incremental false",
+    "lint": "rm -f tsconfig.tsbuildinfo && tsc --noEmit --incremental false",
     "test": "vitest run"
   },
   "dependencies": {
