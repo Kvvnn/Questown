@@ -530,58 +530,87 @@ export function TodayView() {
     <div className="space-y-4" id="today-panel-content">
       <RewardToasts toasts={toasts} />
 
-      <div
-        ref={buildingPanelRef}
-        className="sticky top-2 z-20 h-[32vh] min-h-[170px] max-h-[240px] overflow-y-auto rounded-3xl"
-      >
+      <div className="sticky top-2 z-20">
+        <Card className="relative overflow-hidden p-3" aria-label="오늘 요약 HUD">
+          <div className="pointer-events-none absolute -right-10 -top-12 h-24 w-24 rounded-full bg-indigo-200/40 blur-2xl" />
+
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Today · {record.date}</p>
+              <p className="text-xs font-semibold text-slate-700">{feedback}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1 text-[11px] font-bold">
+              <span className="rounded-lg bg-indigo-100 px-2 py-1 text-indigo-700">
+                완료 <AnimatedNumber value={record.completedCount} />
+              </span>
+              <span className="rounded-lg bg-emerald-100 px-2 py-1 text-emerald-700">
+                <AnimatedNumber value={percent} />%
+              </span>
+            </div>
+          </div>
+
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-200">
+            <motion.div
+              className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400"
+              animate={{ width: `${percent}%` }}
+              transition={{ type: "spring", stiffness: 120, damping: 20 }}
+            />
+          </div>
+        </Card>
+      </div>
+
+      <div ref={buildingPanelRef}>
         <Card className="relative overflow-hidden p-3" aria-labelledby="today-title">
-        <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
+          <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
 
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Daily Log</p>
-            <h2 id="today-title" className="text-xl font-black">
-              Today · {record.date}
-            </h2>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Questown Building</p>
+              <h2 id="today-title" className="text-lg font-black">
+                오늘의 건물
+              </h2>
+            </div>
+            <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
+              지붕: {record.isFinalized ? record.roofType.toUpperCase() : "NONE"}
+            </div>
           </div>
-          <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-sm font-semibold">{feedback}</span>
-        </div>
 
-        <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
-          <div className="metric-pill bg-orange-100/80">
-            🔥 Streak <AnimatedNumber value={streak} />일
+          <div className="mb-3 grid grid-cols-2 gap-2 text-sm">
+            <div className="metric-pill bg-orange-100/80">
+              🔥 Streak <AnimatedNumber value={streak} />일
+            </div>
+            <div className="metric-pill bg-indigo-100/80">
+              🎯 목표 <AnimatedNumber value={dailyGoal} />개
+            </div>
           </div>
-          <div className="metric-pill bg-indigo-100/80">
-            🎯 목표 <AnimatedNumber value={dailyGoal} />개
-          </div>
-        </div>
 
-        {CssFramerBuildingRenderer.render({
-          height,
-          roofType: record.roofType,
-          finalized: record.isFinalized,
-          animationEvent,
-          reducedMotion: reduceMotion,
-          completedQuestTypes
-        })}
+          {CssFramerBuildingRenderer.render({
+            height,
+            roofType: record.roofType,
+            finalized: record.isFinalized,
+            animationEvent,
+            reducedMotion: reduceMotion,
+            completedQuestTypes
+          })}
 
-        <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm" aria-live="polite">
-          <div className="metric-pill">
-            완료 <AnimatedNumber value={record.completedCount} />
+          <div className="mt-4 grid grid-cols-3 gap-2 text-center text-sm" aria-live="polite">
+            <div className="metric-pill">
+              완료 <AnimatedNumber value={record.completedCount} />
+            </div>
+            <div className="metric-pill">
+              전체 <AnimatedNumber value={record.totalCount} />
+            </div>
+            <div className="metric-pill">
+              완료율 <AnimatedNumber value={percent} />%
+            </div>
           </div>
-          <div className="metric-pill">
-            전체 <AnimatedNumber value={record.totalCount} />
-          </div>
-          <div className="metric-pill">
-            완료율 <AnimatedNumber value={percent} />%
-          </div>
-        </div>
+        </Card>
+      </div>
 
-        <div className="mt-2 text-center text-xs font-semibold text-slate-600" aria-live="polite">
-          지붕 상태: {record.isFinalized ? record.roofType.toUpperCase() : "마감 전 (NONE)"}
-        </div>
-
-        <div className="mt-3 grid grid-cols-2 gap-2">
+      <Card>
+        <h3 className="mb-2 text-base font-bold">하루 마감 컨트롤</h3>
+        <div className="grid grid-cols-2 gap-2">
           <Button
             className="min-h-11 bg-quest-primary text-white"
             onClick={onFinalizeDay}
@@ -596,8 +625,7 @@ export function TodayView() {
             다음 날로 넘기기 (DEV)
           </Button>
         </div>
-        </Card>
-      </div>
+      </Card>
 
       <Card>
         <h3 className="mb-2 text-base font-bold">퀘스트 추가</h3>
