@@ -147,6 +147,9 @@ const normalizeNonEmptyString = (value: unknown) => {
   return trimmed.length > 0 ? trimmed : undefined;
 };
 
+const isRecordObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 const normalizeTimestamp = (value: unknown, fallback: string) => {
   const normalized = normalizeNonEmptyString(value);
   if (!normalized) return fallback;
@@ -764,12 +767,16 @@ export const useQuestownStore = create<QuestownState>()(
       }),
 
       importBackup: (data) => {
-        if (!data?.state?.recordsByDate || typeof data.state.recordsByDate !== "object") {
+        const rawRecords = data?.state?.recordsByDate;
+        if (!isRecordObject(rawRecords)) {
           return { ok: false, reason: "백업 데이터 형식이 올바르지 않아요." };
         }
 
         const nextDate = isDateKey(data.state.currentDateKey) ? data.state.currentDateKey : toDateKey();
-        const normalizedRecords = normalizeRecordsByDate(data.state.recordsByDate as Record<string, LegacyRecordLike>);
+        const normalizedRecords = normalizeRecordsByDate(rawRecords as Record<string, LegacyRecordLike>);
+        if (Object.keys(rawRecords).length > 0 && Object.keys(normalizedRecords).length === 0) {
+          return { ok: false, reason: "백업 데이터의 날짜 기록 형식이 올바르지 않아요." };
+        }
         const synced = syncStateToToday(normalizedRecords, nextDate);
         const selectedMonth = resolveTownMonth(data.state.selectedMonth, synced.currentDateKey);
 

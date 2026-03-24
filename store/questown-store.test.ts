@@ -327,6 +327,50 @@ describe("questown store safeguards", () => {
     expect(() => getCompletedQuestTypes(quests)).not.toThrow();
   });
 
+  it("rejects backup imports when recordsByDate is not a plain object", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+    useQuestownStore.getState().addQuest({ title: "원본 유지", type: "main" });
+
+    const result = useQuestownStore.getState().importBackup({
+      version: 4,
+      exportedAt: "2026-03-25T00:00:00.000Z",
+      state: {
+        currentDateKey,
+        selectedMonth: currentDateKey.slice(0, 7),
+        dailyGoal: 3,
+        weeklyMainTarget: 10,
+        recordsByDate: [] as never
+      }
+    });
+
+    expect(result).toEqual({ ok: false, reason: "백업 데이터 형식이 올바르지 않아요." });
+    expect(useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.map((quest) => quest.title)).toContain("원본 유지");
+  });
+
+  it("rejects backup imports when every date key is malformed", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+    useQuestownStore.getState().addQuest({ title: "원본 유지", type: "main" });
+
+    const result = useQuestownStore.getState().importBackup(
+      createBackupData(currentDateKey, {
+        broken: {
+          quests: [
+            {
+              id: "broken-record",
+              title: "깨진 기록",
+              type: "main",
+              completed: false,
+              createdAt: "2026-03-25T00:00:00.000Z"
+            }
+          ]
+        }
+      }) as never
+    );
+
+    expect(result).toEqual({ ok: false, reason: "백업 데이터의 날짜 기록 형식이 올바르지 않아요." });
+    expect(useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.map((quest) => quest.title)).toContain("원본 유지");
+  });
+
   it("normalizes malformed recurrence anchors during backup import so day rollover does not throw", () => {
     const { currentDateKey } = useQuestownStore.getState();
 

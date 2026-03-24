@@ -2,6 +2,7 @@ import { emptyQuestTypeCounter } from "./quest";
 import { DailyRecord } from "./types";
 
 const APP_TIME_ZONE = "Asia/Seoul";
+const APP_UTC_OFFSET_HOURS = 9;
 const DATE_KEY_PARTS = /^(\d{4})-(\d{2})-(\d{2})$/;
 const MONTH_KEY_PARTS = /^(\d{4})-(\d{2})$/;
 
@@ -98,6 +99,11 @@ export const toMonthKey = (date = new Date()) => {
 export const dateKeyToDate = (dateKey: string) => {
   const { year, month, day } = parseDateKey(dateKey);
   return new Date(Date.UTC(year, month - 1, day));
+};
+
+export const dateKeyToStartOfDayISOString = (dateKey: string) => {
+  const { year, month, day } = parseDateKey(dateKey);
+  return new Date(Date.UTC(year, month - 1, day, -APP_UTC_OFFSET_HOURS)).toISOString();
 };
 
 export const monthKeyToDate = (monthKey: string) => {

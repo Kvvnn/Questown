@@ -8,6 +8,7 @@ import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button, Card } from "@/components/ui";
 import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
 import { getDisplayedRoofType, roofTypeLabel } from "@/domain/building";
+import { ensureDailyRecord } from "@/domain/date";
 import {
   getCompletedDependentIds,
   getExecutionQueue,
@@ -19,7 +20,7 @@ import {
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getStreakCount, getWeeklySummary } from "@/domain/progress";
 import { getCompletedQuestTypes, questTypeLabel, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
-import { AppBackupData, QuestItem, QuestPriority, QuestType, RecurrencePattern } from "@/domain/types";
+import { AppBackupData, DailyRecord, QuestItem, QuestPriority, QuestType, RecurrencePattern } from "@/domain/types";
 import { useQuestownStore, useTodayBuildingHeight, useTodayRecord } from "@/store/questown-store";
 
 const sectionDescription: Record<QuestType, string> = {
@@ -72,6 +73,16 @@ const getRoofFeedback = (completionRate: number) => {
   return "🌤️ 기초 지붕! 그래도 오늘의 건물은 세워졌어요.";
 };
 
+const createRewardSnapshot = (
+  currentRecord: Pick<DailyRecord, "date" | "completedCount" | "isFinalized">,
+  streak: number
+) => ({
+  date: currentRecord.date,
+  completedCount: currentRecord.completedCount,
+  isFinalized: currentRecord.isFinalized,
+  streak
+});
+
 export function TodayView() {
   const record = useTodayRecord();
   const height = useTodayBuildingHeight();
@@ -97,7 +108,6 @@ export function TodayView() {
   const eventTimeoutRefs = useRef<number[]>([]);
   const toastTimeoutRefs = useRef<number[]>([]);
   const initializedRef = useRef(false);
-  const skipNextRewardRef = useRef(false);
   const toastIdRef = useRef(1);
 
   const dailyGoal = useQuestownStore((state) => state.dailyGoal);
@@ -189,12 +199,7 @@ export function TodayView() {
   );
   const weeklyMainPercent = Math.round(weeklyMainProgress.rate * 100);
 
-  const previousRef = useRef({
-    date: record.date,
-    completedCount: record.completedCount,
-    isFinalized: record.isFinalized,
-    streak
-  });
+  const previousRef = useRef(createRewardSnapshot(record, streak));
 
   const feedback = useMemo(() => {
     if (record.completedCount === 0) return "첫 퀘스트를 완료하고 1층을 올려보세요.";
@@ -211,6 +216,12 @@ export function TodayView() {
     eventTimeoutRefs.current = [];
   }, []);
 
+  const clearToastQueue = useCallback(() => {
+    toastTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
+    toastTimeoutRefs.current = [];
+    setToasts([]);
+  }, []);
+
   const scrollToBuilding = useCallback(() => {
     buildingPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, []);
@@ -222,6 +233,7 @@ export function TodayView() {
     setToasts((prev) => [...prev, { id, text, tone }]);
 
     const timeout = window.setTimeout(() => {
+      toastTimeoutRefs.current = toastTimeoutRefs.current.filter((storedId) => storedId !== timeout);
       setToasts((prev) => prev.filter((toast) => toast.id !== id));
     }, 2200);
 
@@ -243,34 +255,22 @@ export function TodayView() {
   useEffect(() => {
     return () => {
       clearEventQueue();
-      toastTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
-      toastTimeoutRefs.current = [];
+      clearToastQueue();
     };
-  }, [clearEventQueue]);
+  }, [clearEventQueue, clearToastQueue]);
 
   useEffect(() => {
     if (!initializedRef.current) {
       initializedRef.current = true;
-      previousRef.current = {
-        date: record.date,
-        completedCount: record.completedCount,
-        isFinalized: record.isFinalized,
-        streak
-      };
+      previousRef.current = createRewardSnapshot(record, streak);
       return;
     }
 
     const prev = previousRef.current;
 
-    if (skipNextRewardRef.current || prev.date !== record.date) {
-      skipNextRewardRef.current = false;
+    if (prev.date !== record.date) {
       clearEventQueue();
-      previousRef.current = {
-        date: record.date,
-        completedCount: record.completedCount,
-        isFinalized: record.isFinalized,
-        streak
-      };
+      previousRef.current = createRewardSnapshot(record, streak);
       return;
     }
 
@@ -312,18 +312,14 @@ export function TodayView() {
 
     queue.forEach((event, index) => {
       const timeout = window.setTimeout(() => {
+        eventTimeoutRefs.current = eventTimeoutRefs.current.filter((id) => id !== timeout);
         triggerReward(event.type, event.text, event.tone);
       }, index * 220);
 
       eventTimeoutRefs.current.push(timeout);
     });
 
-    previousRef.current = {
-      date: record.date,
-      completedCount: record.completedCount,
-      isFinalized: record.isFinalized,
-      streak
-    };
+    previousRef.current = createRewardSnapshot(record, streak);
   }, [
     clearEventQueue,
     dailyGoal,
@@ -476,14 +472,21 @@ export function TodayView() {
         return;
       }
 
-      skipNextRewardRef.current = true;
       const result = importBackup(parsed);
-      if (!result.ok) {
-        skipNextRewardRef.current = false;
+      if (result.ok) {
+        const nextState = useQuestownStore.getState();
+        const nextRecord =
+          nextState.recordsByDate[nextState.currentDateKey] ?? ensureDailyRecord(nextState.currentDateKey);
+        const nextStreak = getStreakCount(nextState.recordsByDate, nextState.currentDateKey, nextState.dailyGoal);
+
+        clearEventQueue();
+        clearToastQueue();
+        setAnimationEvent(idleQuestAnimationEvent);
+        previousRef.current = createRewardSnapshot(nextRecord, nextStreak);
       }
+
       showMessage(result.ok ? "백업을 복원했어요." : result.reason ?? "복원에 실패했어요.", result.ok ? "success" : "error");
     } catch {
-      skipNextRewardRef.current = false;
       showMessage("백업 파일을 읽지 못했어요.", "error");
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = "";

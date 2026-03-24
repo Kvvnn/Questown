@@ -73,9 +73,11 @@ describe("recurrence utils", () => {
     const recurring = createRecurringQuestCopy(baseQuest, "2026-03-25");
     expect(recurring.completed).toBe(false);
     expect(recurring.recurrenceKey).toBe("rk-1");
+    expect(recurring.createdAt).toBe("2026-03-24T15:00:00.000Z");
 
-    const carry = createCarryOverQuestCopy(baseQuest);
+    const carry = createCarryOverQuestCopy(baseQuest, "2026-03-25");
     expect(carry?.carryOverCount).toBe(1);
+    expect(carry?.createdAt).toBe("2026-03-24T15:00:00.000Z");
     expect(canCarryOver({ ...baseQuest, carryOverCount: 3 })).toBe(false);
   });
 

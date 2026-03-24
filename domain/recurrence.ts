@@ -1,4 +1,4 @@
-import { dateKeyToDate } from "./date";
+import { dateKeyToDate, dateKeyToStartOfDayISOString } from "./date";
 import { createQuestownId } from "./id";
 import { getQuestTitleKey } from "./quest";
 import { QuestItem, RecurrencePattern } from "./types";
@@ -72,7 +72,7 @@ export const createRecurringQuestCopy = (quest: QuestItem, targetDateKey: string
     title: quest.title,
     type: quest.type,
     completed: false,
-    createdAt: new Date().toISOString(),
+    createdAt: dateKeyToStartOfDayISOString(targetDateKey),
     priority: quest.priority,
     focusPinned: quest.focusPinned,
     dependencyQuestIds: undefined,
@@ -88,7 +88,7 @@ export const createRecurringQuestCopy = (quest: QuestItem, targetDateKey: string
   };
 };
 
-export const createCarryOverQuestCopy = (quest: QuestItem): QuestItem | null => {
+export const createCarryOverQuestCopy = (quest: QuestItem, targetDateKey: string): QuestItem | null => {
   if (!shouldCarryOver(quest) || !canCarryOver(quest)) return null;
 
   const pattern = normalizeRecurrencePattern(quest.recurrencePattern, quest.isRecurring);
@@ -100,7 +100,7 @@ export const createCarryOverQuestCopy = (quest: QuestItem): QuestItem | null => 
     title: quest.title,
     type: quest.type,
     completed: false,
-    createdAt: new Date().toISOString(),
+    createdAt: dateKeyToStartOfDayISOString(targetDateKey),
     priority: quest.priority,
     focusPinned: quest.focusPinned,
     dependencyQuestIds: undefined,
@@ -117,7 +117,7 @@ export const createCarryOverQuestCopy = (quest: QuestItem): QuestItem | null => 
 };
 
 export const createNextDayQuestCopies = (quest: QuestItem, targetDateKey: string) => {
-  const carryOverCopy = createCarryOverQuestCopy(quest);
+  const carryOverCopy = createCarryOverQuestCopy(quest, targetDateKey);
   const recurringCopy = isRecurringDueOnDate(quest, targetDateKey) ? createRecurringQuestCopy(quest, targetDateKey) : null;
 
   // A recurring quest that also carries over should still surface as a single next-day quest.
