@@ -15,12 +15,13 @@ import {
   getFocusQuestIds,
   getWeeklyMainProgress,
   normalizeQuestPriority,
-  priorityLabel
+  priorityLabel,
+  wouldCreateDependencyCycle
 } from "@/domain/execution";
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getStreakCount, getWeeklySummary } from "@/domain/progress";
 import { getCompletedQuestTypes, questTypeLabel, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
-import { AppBackupData, DailyRecord, QuestItem, QuestPriority, QuestType, RecurrencePattern } from "@/domain/types";
+import { DailyRecord, QuestItem, QuestPriority, QuestType, RecurrencePattern } from "@/domain/types";
 import { useQuestownStore, useTodayBuildingHeight, useTodayRecord } from "@/store/questown-store";
 
 const sectionDescription: Record<QuestType, string> = {
@@ -60,15 +61,15 @@ const workspaceTabOrder: WorkspaceTab[] = ["run", "compose", "manage"];
 const workspaceTabMeta: Record<WorkspaceTab, { label: string; hint: string }> = {
   run: {
     label: "실행",
-    hint: "지금 처리할 퀘스트"
+    hint: "먼저 처리할 퀘스트"
   },
   compose: {
     label: "추가",
-    hint: "새 퀘스트 등록"
+    hint: "필요할 때 등록"
   },
   manage: {
     label: "관리",
-    hint: "정리와 운영"
+    hint: "정리와 백업"
   }
 };
 
@@ -86,6 +87,8 @@ const nextPriority: Record<QuestPriority, QuestPriority> = {
   p2: "p3",
   p3: "p1"
 };
+
+const executionPreviewLimit = 3;
 
 const getRoofFeedback = (completionRate: number) => {
   if (completionRate >= 0.8) return "🏆 완성 지붕! 오늘 하루를 정말 잘 마무리했어요.";
@@ -110,7 +113,7 @@ export function TodayView() {
   const [hasTriedEmptySubmit, setHasTriedEmptySubmit] = useState(false);
   const [selectedType, setSelectedType] = useState<QuestType>("main");
   const [selectedPriority, setSelectedPriority] = useState<QuestPriority>("p1");
-  const [selectedDependencyQuestId, setSelectedDependencyQuestId] = useState<string>("");
+  const [selectedDependencyQuestIds, setSelectedDependencyQuestIds] = useState<string[]>([]);
   const [workspaceTab, setWorkspaceTab] = useState<WorkspaceTab>("run");
   const [focusMode, setFocusMode] = useState(false);
   const [recurrencePattern, setRecurrencePattern] = useState<RecurrencePattern>("none");
@@ -202,7 +205,14 @@ export function TodayView() {
     () => (focusMode ? executionQueue.filter((item) => focusQuestIds.has(item.quest.id)) : executionQueue),
     [executionQueue, focusMode, focusQuestIds]
   );
-  const executionPreview = useMemo(() => visibleExecutionQueue.slice(0, 3), [visibleExecutionQueue]);
+  const primaryExecutionQueue = useMemo(
+    () => visibleExecutionQueue.slice(0, executionPreviewLimit),
+    [visibleExecutionQueue]
+  );
+  const deferredExecutionQueue = useMemo(
+    () => visibleExecutionQueue.slice(executionPreviewLimit),
+    [visibleExecutionQueue]
+  );
   const allRemainingBlocked = useMemo(
     () => executionQueue.length > 0 && executionQueue.every((item) => item.blockedByIds.length > 0),
     [executionQueue]
@@ -220,6 +230,10 @@ export function TodayView() {
     [record.quests]
   );
   const hasDependencyCandidates = dependencyCandidates.length > 0;
+  const composerDependencyCandidateIds = useMemo(
+    () => new Set(dependencyCandidates.map((quest) => quest.id)),
+    [dependencyCandidates]
+  );
 
   const weeklyMainProgress = useMemo(
     () => getWeeklyMainProgress(recordsByDate, currentDateKey),
@@ -366,13 +380,11 @@ export function TodayView() {
   ]);
 
   useEffect(() => {
-    if (!selectedDependencyQuestId) return;
-
-    const stillAvailable = dependencyCandidates.some((quest) => quest.id === selectedDependencyQuestId);
-    if (!stillAvailable) {
-      setSelectedDependencyQuestId("");
-    }
-  }, [dependencyCandidates, selectedDependencyQuestId]);
+    setSelectedDependencyQuestIds((prev) => {
+      const next = prev.filter((questId) => composerDependencyCandidateIds.has(questId));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [composerDependencyCandidateIds]);
 
   const handleSelectType = (type: QuestType) => {
     clearComposerFeedback();
@@ -407,7 +419,7 @@ export function TodayView() {
       title: trimmedTitle,
       type: selectedType,
       priority: selectedPriority,
-      dependencyQuestIds: selectedDependencyQuestId ? [selectedDependencyQuestId] : undefined,
+      dependencyQuestIds: selectedDependencyQuestIds.length > 0 ? selectedDependencyQuestIds : undefined,
       recurrencePattern,
       recurrenceIntervalDays: recurrencePattern === "interval" ? recurrenceIntervalDays : undefined,
       carryOverEnabled,
@@ -425,7 +437,7 @@ export function TodayView() {
 
     setTitleInput("");
     setHasTriedEmptySubmit(false);
-    setSelectedDependencyQuestId("");
+    setSelectedDependencyQuestIds([]);
     setComposerMessage(null);
     titleInputRef.current?.focus();
   };
@@ -493,10 +505,10 @@ export function TodayView() {
 
     try {
       const text = await file.text();
-      let parsed: AppBackupData;
+      let parsed: unknown;
 
       try {
-        parsed = JSON.parse(text) as AppBackupData;
+        parsed = JSON.parse(text) as unknown;
       } catch {
         showGlobalMessage("JSON 형식이 올바르지 않아요.", "error");
         return;
@@ -570,9 +582,33 @@ export function TodayView() {
     focusComposerInput();
   };
 
-  const openRunWorkspace = () => {
-    activateWorkspaceTab("run");
+  const openWorkspaceTab = (nextTab: WorkspaceTab) => {
+    activateWorkspaceTab(nextTab);
     workspacePanelRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+  };
+
+  const toggleComposerDependency = (dependencyQuestId: string) => {
+    clearComposerFeedback();
+    setSelectedDependencyQuestIds((prev) =>
+      prev.includes(dependencyQuestId) ? prev.filter((questId) => questId !== dependencyQuestId) : [...prev, dependencyQuestId]
+    );
+  };
+
+  const toggleQuestDependency = (quest: QuestItem, dependencyQuestId: string) => {
+    const nextDependencies = (quest.dependencyQuestIds ?? []).includes(dependencyQuestId)
+      ? (quest.dependencyQuestIds ?? []).filter((questId) => questId !== dependencyQuestId)
+      : [...(quest.dependencyQuestIds ?? []), dependencyQuestId];
+
+    const result = updateQuestMeta(quest.id, {
+      dependencyQuestIds: nextDependencies.length > 0 ? nextDependencies : []
+    });
+
+    if (!result.ok) {
+      showGlobalMessage(result.reason ?? "선행 퀘스트를 변경할 수 없어요.", "error");
+      return;
+    }
+
+    setGlobalMessage(null);
   };
 
   const renderQuestItem = (
@@ -599,6 +635,22 @@ export function TodayView() {
     const rollbackBlockedPreview = rollbackBlockedTitles.slice(0, 2).join(", ");
     const rollbackBlockedSuffix =
       rollbackBlockedTitles.length > 2 ? ` 외 ${rollbackBlockedTitles.length - 2}개` : "";
+    const dependencyTitles = (quest.dependencyQuestIds ?? [])
+      .map((id) => questMap.get(id)?.title)
+      .filter((title): title is string => Boolean(title));
+    const dependencyPreview = dependencyTitles.slice(0, 2).join(", ");
+    const dependencySuffix = dependencyTitles.length > 2 ? ` 외 ${dependencyTitles.length - 2}개` : "";
+    const dependencyEditorOptions = record.quests
+      .filter(
+        (candidate) =>
+          candidate.id !== quest.id &&
+          candidate.title.trim().length > 0 &&
+          (!candidate.completed || (quest.dependencyQuestIds ?? []).includes(candidate.id))
+      )
+      .map((candidate) => ({
+        quest: candidate,
+        blockedByCycle: wouldCreateDependencyCycle(quest.id, candidate.id, questMap)
+      }));
     const isRollbackBlocked = quest.completed && rollbackBlockedDependentIds.length > 0;
     const isToggleDisabled = record.isFinalized || isBlocked || isRollbackBlocked;
 
@@ -614,7 +666,6 @@ export function TodayView() {
             checked={quest.completed}
             disabled={isToggleDisabled}
             onChange={() => {
-              const wasCompleted = quest.completed;
               const result = toggleQuest(quest.id);
               if (!result.ok) {
                 showGlobalMessage(result.reason ?? "수정할 수 없어요.", "error");
@@ -622,7 +673,6 @@ export function TodayView() {
               }
 
               setGlobalMessage(null);
-              if (!wasCompleted) scrollToBuilding();
             }}
             className="mt-1 h-5 w-5 shrink-0"
           />
@@ -760,6 +810,75 @@ export function TodayView() {
                     삭제
                   </Button>
                 </div>
+
+                <div className="mt-3 rounded-2xl border border-slate-200 bg-white/90 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs font-semibold text-slate-700">선행 퀘스트</p>
+                      <p className="text-[11px] text-slate-500">
+                        {(quest.dependencyQuestIds ?? []).length > 0
+                          ? `${dependencyPreview}${dependencySuffix}`
+                          : "없음"}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">
+                      {(quest.dependencyQuestIds ?? []).length}개
+                    </span>
+                  </div>
+
+                  <div className="mt-2 space-y-2">
+                    {dependencyEditorOptions.length === 0 ? (
+                      <p className="rounded-xl bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+                        연결할 다른 퀘스트가 아직 없어요.
+                      </p>
+                    ) : (
+                      dependencyEditorOptions.map((option) => {
+                        const checked = (quest.dependencyQuestIds ?? []).includes(option.quest.id);
+                        const disabled = record.isFinalized || option.blockedByCycle;
+
+                        return (
+                          <label
+                            key={option.quest.id}
+                            className={`flex items-start gap-2 rounded-xl border px-2 py-2 ${
+                              disabled ? "border-slate-200 bg-slate-50" : "border-slate-200 bg-white"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disabled}
+                              onChange={() => toggleQuestDependency(quest, option.quest.id)}
+                              className="mt-0.5 h-4 w-4 shrink-0"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="text-xs font-semibold text-slate-700">{option.quest.title}</span>
+                                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${getFloorVisualStyle(option.quest.type).badgeClass}`}>
+                                  {questTypeShortLabel[option.quest.type]}
+                                </span>
+                                {option.quest.completed ? (
+                                  <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                                    완료됨
+                                  </span>
+                                ) : null}
+                                {option.blockedByCycle ? (
+                                  <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">
+                                    순환 방지
+                                  </span>
+                                ) : null}
+                              </span>
+                              {option.blockedByCycle ? (
+                                <span className="mt-1 block text-[11px] font-semibold text-rose-600">
+                                  이 항목을 선행으로 두면 순환 관계가 생겨요.
+                                </span>
+                              ) : null}
+                            </span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
             </details>
           </div>
@@ -796,7 +915,6 @@ export function TodayView() {
               }
 
               setGlobalMessage(null);
-              scrollToBuilding();
             }}
             className="mt-1 h-5 w-5 shrink-0"
           />
@@ -884,87 +1002,78 @@ export function TodayView() {
 
       <div ref={buildingPanelRef}>
         <Card className="relative overflow-hidden p-3" aria-labelledby="today-title">
-          <div className="pointer-events-none absolute -right-10 -top-12 h-32 w-32 rounded-full bg-indigo-200/40 blur-2xl" />
+          <div className="pointer-events-none absolute -right-12 -top-12 h-32 w-32 rounded-full bg-indigo-200/35 blur-2xl" />
+          <div className="pointer-events-none absolute -left-12 bottom-0 h-28 w-28 rounded-full bg-cyan-200/25 blur-2xl" />
 
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">오늘 요약</p>
-              <h2 className="mt-1 text-lg font-black text-slate-900">{record.date}</h2>
-              <p className="mt-1 text-xs font-semibold text-slate-600">{feedback}</p>
+          <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3">
+            <div className="min-w-0">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">오늘 흐름</p>
+              <div className="mt-1 flex items-start justify-between gap-2">
+                <div>
+                  <h2 id="today-title" className="text-lg font-black text-slate-900">
+                    {record.date}
+                  </h2>
+                  <p className="mt-1 text-xs font-semibold text-slate-600">{feedback}</p>
+                </div>
+                <span className="rounded-full border border-white/70 bg-white/80 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                  지붕 {roofTypeLabel[displayedRoofType]}
+                </span>
+              </div>
+
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                <motion.div
+                  className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400"
+                  animate={{ width: `${percent}%` }}
+                  transition={{ type: "spring", stiffness: 120, damping: 20 }}
+                />
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm" aria-live="polite">
+                <div className="metric-pill px-2">
+                  <span className="text-[11px] font-semibold text-slate-500">완료</span>
+                  <p className="text-sm font-black text-slate-800">
+                    <AnimatedNumber value={record.completedCount} />/{record.totalCount}
+                  </p>
+                </div>
+                <div className="metric-pill px-2">
+                  <span className="text-[11px] font-semibold text-slate-500">연속</span>
+                  <p className="text-sm font-black text-slate-800">
+                    <AnimatedNumber value={streak} />일
+                  </p>
+                </div>
+                <div className="metric-pill px-2">
+                  <span className="text-[11px] font-semibold text-slate-500">주간</span>
+                  <p className="text-sm font-black text-slate-800">
+                    <AnimatedNumber value={weeklyPercent} />%
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div className="grid gap-1 text-right text-[11px] font-bold">
-              <span className="rounded-lg bg-indigo-100 px-2 py-1 text-indigo-700">
-                완료 <AnimatedNumber value={record.completedCount} /> / <AnimatedNumber value={record.totalCount} />
-              </span>
-              <span className="rounded-lg bg-emerald-100 px-2 py-1 text-emerald-700">
-                <AnimatedNumber value={percent} />%
-              </span>
+            <div className="rounded-2xl border border-white/80 bg-white/75 p-2 shadow-[0_8px_20px_rgba(15,23,42,0.08)]">
+              <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-slate-500">
+                <span>실시간 건물</span>
+                <span>{percent}%</span>
+              </div>
+
+              {CssFramerBuildingRenderer.render({
+                height,
+                roofType: displayedRoofType,
+                finalized: record.isFinalized,
+                animationEvent,
+                reducedMotion: reduceMotion,
+                completedQuestTypes,
+                compact: true
+              })}
             </div>
           </div>
 
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
-            <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400"
-              animate={{ width: `${percent}%` }}
-              transition={{ type: "spring", stiffness: 120, damping: 20 }}
-            />
-          </div>
-
-          <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm" aria-live="polite">
-            <div className="metric-pill px-2">
-              <span className="text-[11px] font-semibold text-slate-500">연속</span>
-              <p className="text-sm font-black text-slate-800">
-                <AnimatedNumber value={streak} />일
-              </p>
-            </div>
-            <div className="metric-pill px-2">
-              <span className="text-[11px] font-semibold text-slate-500">목표</span>
-              <p className="text-sm font-black text-slate-800">
-                <AnimatedNumber value={dailyGoal} />개
-              </p>
-            </div>
-            <div className="metric-pill px-2">
-              <span className="text-[11px] font-semibold text-slate-500">주간</span>
-              <p className="text-sm font-black text-slate-800">
-                <AnimatedNumber value={weeklyPercent} />%
-              </p>
-            </div>
-          </div>
-
-          <div className="my-3 flex items-center justify-between gap-2">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">빌딩 현황</p>
-              <h3 id="today-title" className="text-lg font-black">
-                오늘의 건물
-              </h3>
-              <p className="text-xs font-semibold text-slate-600">완료 체크와 마감에 따라 바로 외형이 반응합니다.</p>
-            </div>
-            <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
-              지붕: {roofTypeLabel[displayedRoofType]}
-            </div>
-          </div>
-
-          {CssFramerBuildingRenderer.render({
-            height,
-            roofType: displayedRoofType,
-            finalized: record.isFinalized,
-            animationEvent,
-            reducedMotion: reduceMotion,
-            completedQuestTypes
-          })}
-
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <Button
-              type="button"
-              aria-pressed={focusMode}
-              className={`min-h-10 px-2 text-xs ${focusMode ? "bg-fuchsia-100 text-fuchsia-800" : "bg-slate-100"}`}
-              onClick={() => setFocusMode((prev) => !prev)}
-            >
-              {focusMode ? "집중 ON" : "집중 보기"}
-            </Button>
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <Button type="button" className="min-h-10 bg-white px-2 text-xs" onClick={openComposerWorkspace}>
               퀘스트 추가
+            </Button>
+            <Button type="button" className="min-h-10 bg-slate-100 px-2 text-xs" onClick={() => openWorkspaceTab("manage")}>
+              관리 열기
             </Button>
             <Button
               type="button"
@@ -978,47 +1087,6 @@ export function TodayView() {
           </div>
         </Card>
       </div>
-
-      <Card>
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Execution</p>
-            <h3 className="text-base font-bold text-slate-900">지금 할 일</h3>
-            <p className="text-xs text-slate-500">오늘 화면에서는 다음 행동만 먼저 보이고, 나머지는 아래 작업 보드에서 정리합니다.</p>
-          </div>
-          <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
-            {focusMode ? `집중 ${visibleExecutionQueue.length}개` : `남은 ${executionQueue.length}개`}
-          </span>
-        </div>
-
-        {executionPreview.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-sm text-slate-500">
-            {record.totalCount === 0
-              ? "오늘 첫 퀘스트를 아래 작업 보드의 추가 탭에서 등록해 보세요."
-              : executionQueue.length === 0
-                ? "오늘 등록한 퀘스트를 모두 완료했어요. 바로 위에서 하루를 마감할 수 있어요."
-                : allRemainingBlocked
-                  ? "지금 남은 퀘스트는 모두 선행 조건으로 막혀 있어요. 실행 탭에서 막힌 순서를 확인해 보세요."
-                  : focusMode
-                    ? "집중 모드 기준으로 지금 볼 퀘스트가 없어요. 실행 탭에서 집중 모드를 꺼보세요."
-                    : "지금 바로 실행할 수 있는 퀘스트가 없어요."}
-          </div>
-        ) : (
-          <ul className="space-y-2">{executionPreview.map((quest) => renderExecutionPreviewItem(quest.quest))}</ul>
-        )}
-
-        {visibleExecutionQueue.length > executionPreview.length ? (
-          <Button type="button" className="mt-3 min-h-10 w-full bg-slate-100 text-sm" onClick={openRunWorkspace}>
-            남은 퀘스트 {visibleExecutionQueue.length - executionPreview.length}개 더 보기
-          </Button>
-        ) : null}
-
-        {visibleExecutionQueue.length > 0 && allRemainingBlocked ? (
-          <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-            모든 남은 퀘스트가 선행 조건으로 막혀 있어요. 실행 탭에서 &quot;선행 필요&quot;가 보이는 항목부터 풀어 보세요.
-          </p>
-        ) : null}
-      </Card>
 
       <div ref={workspacePanelRef} className="space-y-3">
         <Card className="p-2">
@@ -1058,18 +1126,46 @@ export function TodayView() {
           tabIndex={-1}
         >
           <Card>
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div>
-                <h3 className="text-base font-bold text-slate-900">실행 보드</h3>
-                <p className="text-xs text-slate-500">체크하면 바로 건물이 반응하고, 완료한 항목은 아래 완료 목록으로 이동합니다.</p>
+            <div className="mb-3 grid grid-cols-[minmax(0,1fr)_124px] gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Execution</p>
+                <h3 className="text-base font-bold text-slate-900">지금 할 일</h3>
+                <p className="mt-1 text-xs text-slate-500">오늘은 먼저 실행만 보이고, 나머지는 필요할 때 펼쳐서 정리합니다.</p>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
+                    {focusMode ? `집중 ${visibleExecutionQueue.length}개` : `남은 ${executionQueue.length}개`}
+                  </span>
+                  <label className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs font-semibold text-slate-700">
+                    <span className="mr-2">집중 모드</span>
+                    <input
+                      type="checkbox"
+                      checked={focusMode}
+                      onChange={(e) => setFocusMode(e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                  </label>
+                </div>
               </div>
-              <label className="rounded-2xl border border-white/70 bg-white/80 px-3 py-2 text-xs font-semibold text-slate-700">
-                <span className="mr-2">집중 모드</span>
-                <input type="checkbox" checked={focusMode} onChange={(e) => setFocusMode(e.target.checked)} className="h-4 w-4" />
-              </label>
+
+              <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-2">
+                <div className="mb-1 flex items-center justify-between gap-2 text-[10px] font-semibold text-sky-700">
+                  <span>체크 즉시 반영</span>
+                  <span>{height}층</span>
+                </div>
+                {CssFramerBuildingRenderer.render({
+                  height,
+                  roofType: displayedRoofType,
+                  finalized: record.isFinalized,
+                  animationEvent,
+                  reducedMotion: reduceMotion,
+                  completedQuestTypes,
+                  compact: true
+                })}
+              </div>
             </div>
 
-            {visibleExecutionQueue.length === 0 ? (
+            {primaryExecutionQueue.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-5 text-sm text-slate-500">
                 {record.totalCount === 0
                   ? "오늘 첫 퀘스트를 추가 탭에서 등록해 보세요."
@@ -1082,8 +1178,22 @@ export function TodayView() {
                         : "지금 바로 실행할 수 있는 퀘스트가 없어요."}
               </div>
             ) : (
-              <ul className="space-y-2">{visibleExecutionQueue.map((item) => renderQuestItem(item.quest, { showTypeBadge: true }))}</ul>
+              <ul className="space-y-2">{primaryExecutionQueue.map((item) => renderExecutionPreviewItem(item.quest))}</ul>
             )}
+
+            {deferredExecutionQueue.length > 0 ? (
+              <details className="disclosure mt-3 rounded-2xl border border-slate-200/80 bg-slate-50/70 p-3">
+                <summary className="disclosure-summary text-sm font-semibold text-slate-700">
+                  <span>남은 퀘스트 {deferredExecutionQueue.length}개 더 보기</span>
+                  <span aria-hidden="true" className="disclosure-caret">
+                    ▾
+                  </span>
+                </summary>
+                <ul className="mt-3 space-y-2">
+                  {deferredExecutionQueue.map((item) => renderQuestItem(item.quest, { showTypeBadge: true }))}
+                </ul>
+              </details>
+            ) : null}
 
             {visibleExecutionQueue.length > 0 && allRemainingBlocked ? (
               <p className="mt-3 rounded-xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
@@ -1266,31 +1376,47 @@ export function TodayView() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs font-semibold text-slate-600">선행 퀘스트 (선택)</label>
-                      <select
-                        value={selectedDependencyQuestId}
-                        disabled={!hasDependencyCandidates}
-                        onChange={(e) => {
-                          clearComposerFeedback();
-                          setSelectedDependencyQuestId(e.target.value);
-                        }}
-                        className={`w-full rounded-xl border px-3 py-2 text-sm ${
-                          hasDependencyCandidates ? "border-slate-200 bg-white" : "border-slate-200 bg-slate-100 text-slate-400"
-                        }`}
-                        aria-label="선행 퀘스트 선택"
-                      >
-                        <option value="">없음</option>
-                        {dependencyCandidates.map((quest) => (
-                          <option key={quest.id} value={quest.id}>
-                            [{questTypeShortLabel[quest.type]}] {quest.title}
-                          </option>
-                        ))}
-                      </select>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {hasDependencyCandidates
-                          ? "먼저 끝내야 하는 기존 미완료 퀘스트가 있으면 연결해 주세요."
-                          : "연결할 미완료 퀘스트가 아직 없어요. 먼저 다른 퀘스트를 추가하면 선행 조건을 설정할 수 있어요."}
-                      </p>
+                      <div className="mb-1 flex items-center justify-between gap-2">
+                        <label className="block text-xs font-semibold text-slate-600">선행 퀘스트 (선택)</label>
+                        <span className="rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold text-slate-600">
+                          {selectedDependencyQuestIds.length}개 선택
+                        </span>
+                      </div>
+
+                      <div className="space-y-2">
+                        {hasDependencyCandidates ? (
+                          dependencyCandidates.map((quest) => {
+                            const checked = selectedDependencyQuestIds.includes(quest.id);
+
+                            return (
+                              <label key={quest.id} className="flex items-start gap-2 rounded-xl border border-slate-200 bg-white px-2 py-2">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleComposerDependency(quest.id)}
+                                  className="mt-0.5 h-4 w-4 shrink-0"
+                                />
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex flex-wrap items-center gap-1.5">
+                                    <span className="text-xs font-semibold text-slate-700">{quest.title}</span>
+                                    <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold ${getFloorVisualStyle(quest.type).badgeClass}`}>
+                                      {questTypeShortLabel[quest.type]}
+                                    </span>
+                                  </span>
+                                </span>
+                              </label>
+                            );
+                          })
+                        ) : (
+                          <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                            연결할 미완료 퀘스트가 아직 없어요. 먼저 다른 퀘스트를 추가하면 선행 조건을 설정할 수 있어요.
+                          </p>
+                        )}
+                      </div>
+
+                      {hasDependencyCandidates ? (
+                        <p className="mt-1 text-xs text-slate-500">먼저 끝내야 하는 기존 미완료 퀘스트만 연결할 수 있어요.</p>
+                      ) : null}
                     </div>
 
                     <div>

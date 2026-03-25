@@ -39,6 +39,35 @@ export const getBlockedDependencyIds = (quest: QuestItem, questMap: Map<string, 
   });
 };
 
+const hasDependencyPath = (startId: string, targetId: string, questMap: Map<string, QuestItem>) => {
+  const visited = new Set<string>();
+  const stack = [startId];
+
+  while (stack.length > 0) {
+    const currentId = stack.pop();
+    if (!currentId || visited.has(currentId)) continue;
+    if (currentId === targetId) return true;
+
+    visited.add(currentId);
+
+    const currentQuest = questMap.get(currentId);
+    (currentQuest?.dependencyQuestIds ?? []).forEach((dependencyId) => {
+      if (!visited.has(dependencyId)) stack.push(dependencyId);
+    });
+  }
+
+  return false;
+};
+
+export const wouldCreateDependencyCycle = (
+  questId: string,
+  dependencyId: string,
+  questMap: Map<string, QuestItem>
+) => {
+  if (questId === dependencyId) return true;
+  return hasDependencyPath(dependencyId, questId, questMap);
+};
+
 export const sanitizeQuestDependencies = (quests: QuestItem[]) => {
   const questIds = new Set(quests.map((quest) => quest.id));
   const rawDeps = new Map(

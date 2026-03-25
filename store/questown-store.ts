@@ -16,7 +16,8 @@ import {
 import {
   getBlockedDependencyIds,
   getCompletedDependentIds,
-  normalizeQuestPriority
+  normalizeQuestPriority,
+  wouldCreateDependencyCycle
 } from "@/domain/execution";
 import { createQuestownId } from "@/domain/id";
 import { getQuestCounts, getQuestTitleKey } from "@/domain/quest";
@@ -34,6 +35,7 @@ import {
   RecurrencePattern,
   TabType
 } from "@/domain/types";
+import { validateBackupImportSchema } from "@/store/backup-schema";
 import { createSafeBrowserStorage } from "@/store/browser-storage";
 import { normalizeImportedRecordState } from "@/store/record-normalization";
 import { getMonthKeyFromDateKey, resolveSelectedTownDate, resolveTownMonth } from "./town-selection";
@@ -110,7 +112,7 @@ interface QuestownState {
   hydrateToday: () => void;
   rolloverToToday: () => void;
   exportBackup: () => AppBackupData;
-  importBackup: (data: AppBackupData) => { ok: boolean; reason?: string };
+  importBackup: (data: unknown) => { ok: boolean; reason?: string };
 }
 
 const isQuestType = (value: unknown): value is QuestType => value === "daily" || value === "main" || value === "sub";
@@ -200,32 +202,48 @@ const sanitizeDependencyIds = (ids: unknown, availableQuestIds: Set<string>, sel
   return cleaned && cleaned.length > 0 ? cleaned : undefined;
 };
 
-const hasDependencyPath = (startId: string, targetId: string, questMap: Map<string, QuestItem>) => {
-  const visited = new Set<string>();
-  const stack = [startId];
+const formatQuestPreview = (questIds: string[], questMap: Map<string, QuestItem>) => {
+  const titles = questIds
+    .map((questId) => questMap.get(questId)?.title ?? questId)
+    .filter((title) => title.trim().length > 0);
+  const preview = titles.slice(0, 2).join(", ");
+  const suffix = titles.length > 2 ? ` 외 ${titles.length - 2}개` : "";
 
-  while (stack.length > 0) {
-    const currentId = stack.pop();
-    if (!currentId || visited.has(currentId)) continue;
-    if (currentId === targetId) return true;
-
-    visited.add(currentId);
-
-    const currentQuest = questMap.get(currentId);
-    (currentQuest?.dependencyQuestIds ?? []).forEach((dependencyId) => {
-      if (!visited.has(dependencyId)) stack.push(dependencyId);
-    });
-  }
-
-  return false;
+  return `${preview}${suffix}`;
 };
 
-const sanitizePatchedDependencyIds = (ids: unknown, questId: string, questMap: Map<string, QuestItem>) => {
-  const cleaned = normalizeDependencyIds(ids, questId)?.filter((value) => questMap.has(value));
-  if (!cleaned || cleaned.length === 0) return undefined;
+const validateDependencySelection = ({
+  ids,
+  availableQuestIds,
+  selfId,
+  questMap
+}: {
+  ids: unknown;
+  availableQuestIds: Set<string>;
+  selfId?: string;
+  questMap?: Map<string, QuestItem>;
+}): { ok: true; dependencyQuestIds?: string[] } | { ok: false; reason: string } => {
+  const cleaned = normalizeDependencyIds(ids, selfId);
+  if (!cleaned || cleaned.length === 0) {
+    return { ok: true, dependencyQuestIds: undefined };
+  }
 
-  const safeDependencies = cleaned.filter((dependencyId) => !hasDependencyPath(dependencyId, questId, questMap));
-  return safeDependencies.length > 0 ? safeDependencies : undefined;
+  const missingQuestIds = cleaned.filter((value) => !availableQuestIds.has(value));
+  if (missingQuestIds.length > 0) {
+    return { ok: false, reason: "선행 퀘스트를 찾을 수 없어요." };
+  }
+
+  if (selfId && questMap) {
+    const cyclicQuestIds = cleaned.filter((dependencyId) => wouldCreateDependencyCycle(selfId, dependencyId, questMap));
+    if (cyclicQuestIds.length > 0) {
+      return {
+        ok: false,
+        reason: `순환 선행 관계는 만들 수 없어요: ${formatQuestPreview(cyclicQuestIds, questMap)}`
+      };
+    }
+  }
+
+  return { ok: true, dependencyQuestIds: cleaned };
 };
 
 const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
@@ -473,7 +491,11 @@ export const useQuestownStore = create<QuestownState>()(
         }
 
         const availableIds = new Set(today.quests.map((quest) => quest.id));
-        const dependencies = sanitizeDependencyIds(dependencyQuestIds, availableIds);
+        const dependencyValidation = validateDependencySelection({
+          ids: dependencyQuestIds,
+          availableQuestIds: availableIds
+        });
+        if (!dependencyValidation.ok) return dependencyValidation;
 
         const next = recalc(
           {
@@ -487,7 +509,7 @@ export const useQuestownStore = create<QuestownState>()(
                 completed: false,
                 createdAt: new Date().toISOString(),
                 priority: normalizeQuestPriority(priority, type),
-                dependencyQuestIds: dependencies,
+                dependencyQuestIds: dependencyValidation.dependencyQuestIds,
                 focusPinned: false,
                 isRecurring,
                 recurrencePattern: pattern,
@@ -525,9 +547,15 @@ export const useQuestownStore = create<QuestownState>()(
 
         const questMap = new Map(today.quests.map((quest) => [quest.id, quest] as const));
         const hasDependencyPatch = Object.prototype.hasOwnProperty.call(patch, "dependencyQuestIds");
-        const dependencies = hasDependencyPatch
-          ? sanitizePatchedDependencyIds(patch.dependencyQuestIds, questId, questMap)
-          : undefined;
+        const dependencyValidation = hasDependencyPatch
+          ? validateDependencySelection({
+              ids: patch.dependencyQuestIds,
+              availableQuestIds: new Set(questMap.keys()),
+              selfId: questId,
+              questMap
+            })
+          : { ok: true, dependencyQuestIds: undefined as string[] | undefined };
+        if (!dependencyValidation.ok) return dependencyValidation;
 
         const next = recalc(
           {
@@ -542,7 +570,7 @@ export const useQuestownStore = create<QuestownState>()(
                     ? normalizeQuestPriority(patch.priority, quest.type)
                     : normalizeQuestPriority(quest.priority, quest.type),
                 focusPinned: patch.focusPinned ?? quest.focusPinned,
-                dependencyQuestIds: hasDependencyPatch ? dependencies : quest.dependencyQuestIds
+                dependencyQuestIds: hasDependencyPatch ? dependencyValidation.dependencyQuestIds : quest.dependencyQuestIds
               };
             }),
             isFinalized: false,
@@ -783,24 +811,26 @@ export const useQuestownStore = create<QuestownState>()(
       }),
 
       importBackup: (data) => {
-        const rawRecords = data?.state?.recordsByDate;
-        if (!isRecordObject(rawRecords)) {
-          return { ok: false, reason: "백업 데이터 형식이 올바르지 않아요." };
+        const validation = validateBackupImportSchema(data);
+        if (!validation.ok) {
+          return validation;
         }
 
-        const nextDate = isDateKey(data.state.currentDateKey) ? data.state.currentDateKey : toDateKey();
+        const { state } = validation.data;
+        const rawRecords = state.recordsByDate;
+        const nextDate = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
         const normalizedRecords = normalizeRecordsByDate(rawRecords as Record<string, LegacyRecordLike>);
         if (Object.keys(rawRecords).length > 0 && Object.keys(normalizedRecords).length === 0) {
           return { ok: false, reason: "백업 데이터의 날짜 기록 형식이 올바르지 않아요." };
         }
         const synced = syncStateToToday(normalizedRecords, nextDate);
-        const selectedMonth = resolveTownMonth(data.state.selectedMonth, synced.currentDateKey);
+        const selectedMonth = resolveTownMonth(state.selectedMonth, synced.currentDateKey);
 
         set({
           currentDateKey: synced.currentDateKey,
           selectedMonth,
-          dailyGoal: normalizePositiveInt((data.state as { dailyGoal?: number }).dailyGoal, 3, 1, 10),
-          weeklyMainTarget: normalizePositiveInt((data.state as { weeklyMainTarget?: number }).weeklyMainTarget, 10, 1, 50),
+          dailyGoal: normalizePositiveInt(state.dailyGoal, 3, 1, 10),
+          weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
           recordsByDate: synced.recordsByDate,
           selectedDateInTown: resolveSelectedTownDate(selectedMonth, synced.currentDateKey, undefined, synced.recordsByDate)
         });

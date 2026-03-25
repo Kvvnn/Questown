@@ -4,7 +4,8 @@ import {
   getExecutionQueue,
   getFocusQuestIds,
   getWeeklyMainProgress,
-  sanitizeQuestDependencies
+  sanitizeQuestDependencies,
+  wouldCreateDependencyCycle
 } from "./execution";
 import { DailyRecord, QuestItem } from "./types";
 
@@ -77,6 +78,20 @@ describe("execution utils", () => {
     expect(quests[0].dependencyQuestIds).toEqual(["b"]);
     expect(quests[1].dependencyQuestIds).toEqual(["c"]);
     expect(quests[2].dependencyQuestIds).toBeUndefined();
+  });
+
+  it("detects when assigning a dependency would introduce a cycle", () => {
+    const quests = [
+      q({ id: "a", title: "A", dependencyQuestIds: ["b"] }),
+      q({ id: "b", title: "B", dependencyQuestIds: ["c"] }),
+      q({ id: "c", title: "C" })
+    ];
+
+    const questMap = new Map(quests.map((quest) => [quest.id, quest] as const));
+
+    expect(wouldCreateDependencyCycle("c", "a", questMap)).toBe(true);
+    expect(wouldCreateDependencyCycle("c", "b", questMap)).toBe(true);
+    expect(wouldCreateDependencyCycle("a", "c", questMap)).toBe(false);
   });
 
   it("computes weekly main progress", () => {

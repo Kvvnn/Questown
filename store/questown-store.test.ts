@@ -74,7 +74,7 @@ describe("questown store safeguards", () => {
     expect(useQuestownStore.getState().recordsByDate[dateKey]?.quests).toHaveLength(2);
   });
 
-  it("drops only the newly patched dependency when it would create a cycle", () => {
+  it("rejects dependency patches that would create a cycle", () => {
     const addMain = useQuestownStore.getState().addQuest({ title: "메인 작업", type: "main" });
     expect(addMain.ok).toBe(true);
 
@@ -98,11 +98,22 @@ describe("questown store safeguards", () => {
       .getState()
       .updateQuestMeta(mainQuestId as string, { dependencyQuestIds: [subQuestId as string] });
 
-    expect(result.ok).toBe(true);
+    expect(result).toEqual({ ok: false, reason: "순환 선행 관계는 만들 수 없어요: 후행 작업" });
 
     const quests = useQuestownStore.getState().recordsByDate[dateKey].quests;
     expect(quests.find((quest) => quest.id === mainQuestId)?.dependencyQuestIds).toBeUndefined();
     expect(quests.find((quest) => quest.id === subQuestId)?.dependencyQuestIds).toEqual([mainQuestId]);
+  });
+
+  it("rejects add-time dependencies that do not point to an existing quest", () => {
+    const result = useQuestownStore
+      .getState()
+      .addQuest({ title: "후행 작업", type: "sub", dependencyQuestIds: ["missing-quest-id"] });
+
+    expect(result).toEqual({ ok: false, reason: "선행 퀘스트를 찾을 수 없어요." });
+
+    const dateKey = useQuestownStore.getState().currentDateKey;
+    expect(useQuestownStore.getState().recordsByDate[dateKey]?.quests ?? []).toHaveLength(0);
   });
 
   it("rejects duplicate titles that only differ by case or extra spaces", () => {
@@ -368,6 +379,46 @@ describe("questown store safeguards", () => {
     );
 
     expect(result).toEqual({ ok: false, reason: "백업 데이터의 날짜 기록 형식이 올바르지 않아요." });
+    expect(useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.map((quest) => quest.title)).toContain("원본 유지");
+  });
+
+  it("rejects backup imports when the top-level schema metadata is malformed", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+    useQuestownStore.getState().addQuest({ title: "원본 유지", type: "main" });
+
+    const result = useQuestownStore.getState().importBackup({
+      version: "4" as never,
+      exportedAt: "broken-date",
+      state: {
+        currentDateKey,
+        selectedMonth: currentDateKey.slice(0, 7),
+        dailyGoal: 3,
+        weeklyMainTarget: 10,
+        recordsByDate: {}
+      }
+    });
+
+    expect(result).toEqual({ ok: false, reason: "백업 버전 정보가 올바르지 않아요." });
+    expect(useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.map((quest) => quest.title)).toContain("원본 유지");
+  });
+
+  it("rejects backup imports when state schema fields have invalid types", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+    useQuestownStore.getState().addQuest({ title: "원본 유지", type: "main" });
+
+    const result = useQuestownStore.getState().importBackup({
+      version: 4,
+      exportedAt: "2026-03-25T00:00:00.000Z",
+      state: {
+        currentDateKey,
+        selectedMonth: currentDateKey.slice(0, 7),
+        dailyGoal: "3" as never,
+        weeklyMainTarget: 10,
+        recordsByDate: {}
+      }
+    });
+
+    expect(result).toEqual({ ok: false, reason: "백업 목표 설정 형식이 올바르지 않아요." });
     expect(useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.map((quest) => quest.title)).toContain("원본 유지");
   });
 

@@ -95,7 +95,7 @@ export default function HomePage() {
   return (
     <main
       id="main-content"
-      className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-3 px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-[calc(env(safe-area-inset-top)+12px)]"
+      className="mx-auto flex min-h-screen w-full max-w-xl flex-col gap-2 px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-[calc(env(safe-area-inset-top)+12px)]"
     >
       <a
         href={currentTab === "today" ? "#panel-today" : "#panel-town"}
@@ -104,28 +104,28 @@ export default function HomePage() {
         본문으로 바로가기
       </a>
 
-      <div className="sticky top-[calc(env(safe-area-inset-top)+8px)] z-30 space-y-3 pb-1">
-        <Card className="relative overflow-hidden bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 p-3 text-white shadow-[0_18px_38px_rgba(37,99,235,0.26)]">
+      <div className="sticky top-[calc(env(safe-area-inset-top)+8px)] z-30 space-y-2 pb-1">
+        <Card className="relative overflow-hidden bg-gradient-to-r from-indigo-500 via-blue-500 to-cyan-500 p-2.5 text-white shadow-[0_18px_38px_rgba(37,99,235,0.26)]">
           <div className="pointer-events-none absolute -right-8 -top-12 h-32 w-32 rounded-full bg-white/20 blur-xl" />
           <div className="pointer-events-none absolute -left-10 bottom-0 h-24 w-24 rounded-full bg-white/10 blur-lg" />
 
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-blue-100/90">Questown</p>
-              <h1 className="mt-1 text-xl font-black tracking-tight">오늘을 쌓는 타운</h1>
-              <p className="mt-1 text-xs text-blue-100">핵심 실행은 위로, 정리와 설정은 뒤로 보내는 앱형 흐름입니다.</p>
-            </div>
-
-            <div className="rounded-2xl border border-white/20 bg-white/15 px-3 py-2 text-right text-[11px] font-semibold text-blue-50">
-              <p>현재 화면</p>
-              <p className="mt-1 text-sm font-black text-white">{currentTab === "today" ? "오늘" : "타운"}</p>
+              <div className="mt-1 flex items-center gap-2">
+                <h1 className="text-lg font-black tracking-tight">오늘을 쌓는 타운</h1>
+                <span className="rounded-full border border-white/20 bg-white/15 px-2 py-0.5 text-[10px] font-bold text-blue-50">
+                  {currentTab === "today" ? "오늘" : "타운"}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] text-blue-100">실행을 먼저 보고, 정리와 설정은 뒤로 보냅니다.</p>
             </div>
           </div>
 
           <div
             role="tablist"
             aria-label="Questown 화면 전환"
-            className="mt-3 grid grid-cols-2 gap-2 rounded-2xl border border-white/20 bg-white/10 p-1"
+            className="mt-2 grid grid-cols-2 gap-2 rounded-2xl border border-white/20 bg-white/10 p-1"
           >
             <Button
               type="button"
