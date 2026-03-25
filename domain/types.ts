@@ -68,4 +68,4 @@ export interface AppBackupData {
   };
 }
 
-export type TabType = "today" | "town";
+export type TabType = "today" | "town" | "manage";

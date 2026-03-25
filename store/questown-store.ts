@@ -116,7 +116,7 @@ interface QuestownState {
 }
 
 const isQuestType = (value: unknown): value is QuestType => value === "daily" || value === "main" || value === "sub";
-const isTabType = (value: unknown): value is TabType => value === "today" || value === "town";
+const isTabType = (value: unknown): value is TabType => value === "today" || value === "town" || value === "manage";
 
 const normalizeQuestType = (value: unknown): QuestType => (isQuestType(value) ? value : "daily");
 const normalizeTabType = (value: unknown): TabType => (isTabType(value) ? value : "today");
