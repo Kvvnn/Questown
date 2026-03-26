@@ -19,6 +19,7 @@ export interface BuildingRenderProps {
   reducedMotion?: boolean;
   completedQuestTypes?: QuestType[];
   compact?: boolean;
+  maxVisibleFloors?: number;
 }
 
 const roofColorMap: Record<Exclude<RoofType, "none">, string> = {
@@ -76,10 +77,13 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
     animationEvent,
     reducedMotion = false,
     completedQuestTypes = [],
-    compact = false
+    compact = false,
+    maxVisibleFloors
   }) => {
     const eventType = animationEvent?.type;
-    const displayedRoofType = finalized && height > 0 ? roofType : "none";
+    const visibleHeight = typeof maxVisibleFloors === "number" ? Math.max(0, Math.min(height, maxVisibleFloors)) : height;
+    const hiddenFloorCount = Math.max(0, height - visibleHeight);
+    const displayedRoofType = finalized && visibleHeight > 0 ? roofType : "none";
     const showBurst =
       !reducedMotion &&
       eventType !== "idle" &&
@@ -97,7 +101,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
     const burstTopClass = compact ? "top-8" : "top-10";
     const roofLabelClass = compact ? "px-2 py-0.5 text-[10px]" : "px-2 py-1 text-xs";
 
-    const floorTypes = Array.from({ length: height }).map((_, idx) => completedQuestTypes[idx] ?? fallbackQuestType(idx));
+    const floorTypes = Array.from({ length: visibleHeight }).map((_, idx) => completedQuestTypes[idx] ?? fallbackQuestType(idx));
 
     return (
       <motion.div
@@ -179,6 +183,11 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
         </div>
 
         <div className={`${baseHeightClass} ${baseWidthClass} rounded-xl bg-slate-300/90 shadow-inner`} />
+        {hiddenFloorCount > 0 ? (
+          <span className="rounded-full border border-white/80 bg-white/85 px-2 py-0.5 text-[10px] font-bold text-slate-600 backdrop-blur">
+            +{hiddenFloorCount}층
+          </span>
+        ) : null}
         {displayedRoofType !== "none" ? (
           <span className={`rounded-full border border-white/80 bg-white/80 font-bold text-slate-700 backdrop-blur ${roofLabelClass}`}>
             지붕: {roofTypeLabel[displayedRoofType]}

@@ -522,7 +522,7 @@ export function TodayView() {
       </AnimatePresence>
 
       <div className="flex h-full flex-col px-5 pb-5 pt-5">
-        <header className="flex items-start justify-between gap-3 pt-2">
+        <header className="flex items-center justify-between gap-3 pt-2">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Today</p>
             <h1 className="mt-2 text-[28px] font-black leading-none text-slate-900">{formatTodayLabel(record.date)}</h1>
@@ -544,74 +544,71 @@ export function TodayView() {
           </div>
         </header>
 
-        <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/80">
-          <motion.div
-            className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400"
-            animate={{ width: `${percent}%` }}
-            transition={{ type: "spring", stiffness: 120, damping: 20 }}
-          />
-        </div>
+        <div className="mt-5 flex min-h-0 flex-1 flex-col justify-center">
+          <div className="flex min-h-0 flex-1 flex-col rounded-[36px] bg-white/94 px-5 py-5 shadow-[0_24px_50px_rgba(15,23,42,0.12)]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-black text-slate-600">{heroState.eyebrow}</span>
+              <span className="rounded-full bg-indigo-50 px-3 py-1.5 text-xs font-black text-indigo-700">{percent}%</span>
+            </div>
 
-        <div className="mt-3 text-center text-sm font-semibold text-slate-600">{feedback}</div>
-
-        <div className="flex min-h-0 flex-1 flex-col justify-center">
-          <div className="mb-5 flex justify-center">
-            <div className="rounded-[32px] border border-white/80 bg-white/76 px-5 py-4 shadow-[0_16px_36px_rgba(15,23,42,0.10)]">
+            <div className="flex min-h-0 flex-1 items-center justify-center py-4">
               {CssFramerBuildingRenderer.render({
                 height,
                 roofType: displayedRoofType,
                 finalized: record.isFinalized,
                 animationEvent,
                 reducedMotion: reduceMotion,
-                completedQuestTypes
+                completedQuestTypes,
+                compact: true,
+                maxVisibleFloors: 6
               })}
             </div>
-          </div>
 
-          <div className="rounded-[34px] bg-white px-5 py-5 shadow-[0_22px_48px_rgba(15,23,42,0.12)]">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">{heroState.eyebrow}</p>
-            <h2 className="mt-3 max-h-[98px] overflow-hidden text-[30px] font-black leading-8 text-slate-900">{heroState.title}</h2>
-            <p className="mt-3 max-h-10 overflow-hidden text-sm font-semibold text-slate-600">{heroState.description}</p>
+            <div className="text-center">
+              <h2 className="mx-auto max-h-[96px] max-w-[260px] overflow-hidden text-[30px] font-black leading-8 text-slate-900">
+                {heroState.title}
+              </h2>
+              <p className="mx-auto mt-3 max-w-[260px] max-h-10 overflow-hidden text-sm font-semibold text-slate-600">
+                {heroState.description}
+              </p>
+            </div>
 
-            {primaryQuest ? (
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <span className={`rounded-full px-3 py-1.5 text-xs font-black ${getFloorVisualStyle(primaryQuest.type).badgeClass}`}>
-                  {getFloorVisualStyle(primaryQuest.type).icon} {questTypeShortLabel[primaryQuest.type]}
-                </span>
-                <span className={`rounded-full border px-3 py-1.5 text-xs font-black ${priorityButtonClass[normalizeQuestPriority(primaryQuest.priority, primaryQuest.type)]}`}>
-                  {priorityLabel[normalizeQuestPriority(primaryQuest.priority, primaryQuest.type)]}
-                </span>
-              </div>
-            ) : null}
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100">
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400"
+                animate={{ width: `${percent}%` }}
+                transition={{ type: "spring", stiffness: 120, damping: 20 }}
+              />
+            </div>
+
+            <div className="mt-3 text-center text-xs font-bold text-slate-500">{feedback}</div>
+
+            <Button
+              type="button"
+              className={`mt-5 min-h-[72px] w-full rounded-[28px] border-0 bg-gradient-to-r text-lg font-black text-white shadow-[0_18px_34px_rgba(15,23,42,0.16)] ${getHeroToneClass(heroState.mode, primaryQuest?.type)}`}
+              onClick={handlePrimaryAction}
+            >
+              {heroState.cta}
+            </Button>
           </div>
         </div>
 
-        <div className="mt-auto">
+        <div className="mt-4 grid grid-cols-2 gap-3">
           <Button
             type="button"
-            className={`min-h-[68px] w-full rounded-[28px] border-0 bg-gradient-to-r text-lg font-black text-white shadow-[0_18px_34px_rgba(15,23,42,0.16)] ${getHeroToneClass(heroState.mode, primaryQuest?.type)}`}
-            onClick={handlePrimaryAction}
+            className="min-h-[54px] rounded-[22px] border-0 bg-white text-sm font-black text-slate-700 shadow-[0_12px_24px_rgba(15,23,42,0.08)]"
+            onClick={openListSheet}
           >
-            {heroState.cta}
+            퀘스트 목록
           </Button>
-
-          <div className="mt-3 grid grid-cols-2 gap-3">
-            <Button
-              type="button"
-              className="min-h-[54px] rounded-[22px] border-0 bg-white text-sm font-black text-slate-700 shadow-[0_12px_24px_rgba(15,23,42,0.08)]"
-              onClick={openListSheet}
-            >
-              퀘스트 목록
-            </Button>
-            <Button
-              type="button"
-              className="min-h-[54px] rounded-[22px] border-0 bg-white text-sm font-black text-slate-700 shadow-[0_12px_24px_rgba(15,23,42,0.08)]"
-              disabled={record.isFinalized}
-              onClick={openAddSheet}
-            >
-              빠른 추가
-            </Button>
-          </div>
+          <Button
+            type="button"
+            className="min-h-[54px] rounded-[22px] border-0 bg-white text-sm font-black text-slate-700 shadow-[0_12px_24px_rgba(15,23,42,0.08)]"
+            disabled={record.isFinalized}
+            onClick={openAddSheet}
+          >
+            빠른 추가
+          </Button>
         </div>
       </div>
 
