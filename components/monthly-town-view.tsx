@@ -256,7 +256,7 @@ export function MonthlyTownView() {
 
           {!selectedRecord ? (
             <div className="mt-4 rounded-[26px] bg-slate-50 px-4 py-4 text-sm text-slate-600">
-              <p className="font-bold text-slate-800">아직 빈 부지예요.</p>
+              <p className="font-bold text-slate-800">아직 기록이 없어요.</p>
               <p className="mt-1 leading-relaxed">{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
             </div>
           ) : (

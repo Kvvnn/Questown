@@ -4,7 +4,13 @@ import type { ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { QuestAnimationEvent } from "@/domain/animation";
 import { roofTypeLabel } from "@/domain/building";
-import { getFloorVisualStyle } from "@/domain/floor-style";
+import {
+  getFloorCountLabel,
+  getIsometricPalette,
+  getRoofPalette,
+  getVisibleCompletedFloorTypes,
+  getVisibleFloorCount
+} from "@/domain/isometric-building";
 import { QuestType, RoofType } from "@/domain/types";
 
 export interface AnimatedBuildingRenderer {
@@ -21,12 +27,6 @@ export interface BuildingRenderProps {
   compact?: boolean;
   maxVisibleFloors?: number;
 }
-
-const roofColorMap: Record<Exclude<RoofType, "none">, string> = {
-  low: "border-b-orange-400",
-  mid: "border-b-amber-500",
-  high: "border-b-emerald-500"
-};
 
 const burstParticles = [
   { x: -36, y: -26, delay: 0 },
@@ -64,10 +64,55 @@ const getGlowClass = (eventType: QuestAnimationEvent["type"] | undefined) => {
   return "from-transparent to-transparent";
 };
 
-const fallbackQuestType = (index: number): QuestType => {
-  const order: QuestType[] = ["daily", "main", "sub"];
-  return order[index % order.length];
+const hexToRgba = (hex: string, alpha: number) => {
+  const value = hex.replace("#", "");
+  const normalized = value.length === 3 ? value.split("").map((char) => `${char}${char}`).join("") : value;
+  const parsed = Number.parseInt(normalized, 16);
+  const r = (parsed >> 16) & 255;
+  const g = (parsed >> 8) & 255;
+  const b = parsed & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 };
+
+interface PrismPalette {
+  top: string;
+  left: string;
+  right: string;
+  stroke?: string;
+}
+
+function PrismSvg({
+  width,
+  depth,
+  sideHeight,
+  palette
+}: {
+  width: number;
+  depth: number;
+  sideHeight: number;
+  palette: PrismPalette;
+}) {
+  const half = width / 2;
+  const stroke = palette.stroke ?? "rgba(255,255,255,0.85)";
+
+  return (
+    <svg width={width} height={depth + sideHeight + 2} viewBox={`0 0 ${width} ${depth + sideHeight + 2}`} aria-hidden="true">
+      <polygon points={`${half},0 ${width},${depth / 2} ${half},${depth} 0,${depth / 2}`} fill={palette.top} stroke={stroke} strokeWidth="1.6" />
+      <polygon
+        points={`${half},${depth} 0,${depth / 2} 0,${depth / 2 + sideHeight} ${half},${depth + sideHeight}`}
+        fill={palette.left}
+        stroke={stroke}
+        strokeWidth="1.4"
+      />
+      <polygon
+        points={`${width},${depth / 2} ${half},${depth} ${half},${depth + sideHeight} ${width},${depth / 2 + sideHeight}`}
+        fill={palette.right}
+        stroke={stroke}
+        strokeWidth="1.4"
+      />
+    </svg>
+  );
+}
 
 export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
   render: ({
@@ -81,31 +126,41 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
     maxVisibleFloors
   }) => {
     const eventType = animationEvent?.type;
-    const visibleHeight = typeof maxVisibleFloors === "number" ? Math.max(0, Math.min(height, maxVisibleFloors)) : height;
-    const hiddenFloorCount = Math.max(0, height - visibleHeight);
-    const displayedRoofType = finalized && visibleHeight > 0 ? roofType : "none";
+    const visibleFloors = getVisibleFloorCount(height, maxVisibleFloors ?? 6);
+    const hiddenFloorCount = Math.max(0, height - visibleFloors);
+    const displayedRoofType = finalized && visibleFloors > 0 ? roofType : "none";
+    const roofPalette = getRoofPalette(displayedRoofType);
     const showBurst =
       !reducedMotion &&
       eventType !== "idle" &&
       eventType !== undefined &&
       (eventType === "goal-reached" || eventType === "day-finalized" || eventType === "streak-up");
-    const containerWidthClass = compact ? "w-32" : "w-44";
-    const floorWidthClass = compact ? "w-20" : "w-24";
-    const floorHeightClass = compact ? "h-5" : "h-6";
-    const baseWidthClass = compact ? "w-24" : "w-32";
-    const baseHeightClass = compact ? "h-3" : "h-4";
-    const roofClass = compact
-      ? "border-l-[21px] border-r-[21px] border-b-[16px]"
-      : "border-l-[26px] border-r-[26px] border-b-[20px]";
-    const roofKey = compact ? `compact-${displayedRoofType}` : displayedRoofType;
-    const burstTopClass = compact ? "top-8" : "top-10";
-    const roofLabelClass = compact ? "px-2 py-0.5 text-[10px]" : "px-2 py-1 text-xs";
 
-    const floorTypes = Array.from({ length: visibleHeight }).map((_, idx) => completedQuestTypes[idx] ?? fallbackQuestType(idx));
+    const floorTypes = getVisibleCompletedFloorTypes(height, completedQuestTypes, maxVisibleFloors ?? 6);
+    const floorWidth = compact ? 72 : 92;
+    const floorDepth = compact ? 18 : 22;
+    const floorSideHeight = compact ? 12 : 14;
+    const baseWidth = compact ? 102 : 128;
+    const baseDepth = compact ? 22 : 26;
+    const baseSideHeight = compact ? 8 : 10;
+    const roofWidth = compact ? 58 : 72;
+    const roofDepth = compact ? 16 : 20;
+    const roofSideHeight = compact ? 10 : 12;
+    const stageWidth = compact ? 150 : 188;
+    const stackBottom = compact ? 16 : 20;
+    const stageHeight =
+      stackBottom +
+      baseDepth +
+      baseSideHeight +
+      Math.max(visibleFloors, 1) * floorSideHeight +
+      floorDepth +
+      (roofPalette ? roofSideHeight + 14 : 0) +
+      (compact ? 26 : 34);
+    const roofLabelClass = compact ? "px-2 py-0.5 text-[10px]" : "px-2 py-1 text-xs";
 
     return (
       <motion.div
-        className={`relative mx-auto flex ${containerWidthClass} flex-col items-center justify-end gap-1`}
+        className="relative mx-auto flex flex-col items-center gap-1"
         animate={getContainerAnimation(eventType, reducedMotion)}
         transition={{ type: "spring", stiffness: 230, damping: 17 }}
       >
@@ -117,7 +172,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
           {showBurst ? (
             <motion.div
               key={`burst-${animationEvent?.token}`}
-              className={`pointer-events-none absolute left-1/2 ${burstTopClass}`}
+              className={`pointer-events-none absolute left-1/2 ${compact ? "top-7" : "top-9"}`}
               initial={{ opacity: 0.95 }}
               animate={{ opacity: 0 }}
               exit={{ opacity: 0 }}
@@ -141,27 +196,40 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
           ) : null}
         </AnimatePresence>
 
-        <AnimatePresence>
-          {displayedRoofType !== "none" ? (
-            <motion.div
-              key={`roof-${roofKey}-${animationEvent?.token ?? 0}`}
-              initial={reducedMotion ? false : { y: 18, opacity: 0, scale: 0.9 }}
-              animate={{ y: 0, opacity: 1, scale: 1 }}
-              transition={{ type: "spring", stiffness: 190, damping: 12 }}
-              className={`h-0 w-0 border-l-transparent border-r-transparent ${roofClass} ${roofColorMap[displayedRoofType]}`}
-            />
-          ) : null}
-        </AnimatePresence>
+        <div className="relative" style={{ width: stageWidth, height: stageHeight }}>
+          <div
+            className="pointer-events-none absolute left-1/2 rounded-full blur-xl"
+            style={{
+              width: compact ? 92 : 122,
+              height: compact ? 24 : 30,
+              bottom: 4,
+              marginLeft: compact ? -46 : -61,
+              background: "rgba(15, 23, 42, 0.16)"
+            }}
+          />
 
-        <div className="flex w-full flex-col-reverse items-center gap-1">
+          <div className="absolute left-1/2" style={{ width: baseWidth, marginLeft: -baseWidth / 2, bottom: 0 }}>
+            <PrismSvg
+              width={baseWidth}
+              depth={baseDepth}
+              sideHeight={baseSideHeight}
+              palette={{
+                top: "#dbeafe",
+                left: "#cbd5e1",
+                right: "#dbe4ef",
+                stroke: "rgba(255,255,255,0.9)"
+              }}
+            />
+          </div>
+
           <AnimatePresence>
-            {floorTypes.map((floorType, idx) => {
-              const floorVisual = getFloorVisualStyle(floorType);
-              const isTopFloor = idx === floorTypes.length - 1;
+            {floorTypes.map((floorType, index) => {
+              const palette = getIsometricPalette(floorType);
+              const bottom = stackBottom + index * floorSideHeight;
 
               return (
                 <motion.div
-                  key={`floor-${idx}`}
+                  key={`floor-${index}`}
                   initial={reducedMotion ? false : { y: 16, opacity: 0, scale: 0.92 }}
                   animate={{ y: 0, opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, y: 10 }}
@@ -169,25 +237,69 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
                     type: "spring",
                     stiffness: 280,
                     damping: 18,
-                    delay: reducedMotion ? 0 : idx * 0.03
+                    delay: reducedMotion ? 0 : index * 0.03
                   }}
-                  className={`relative ${floorHeightClass} ${floorWidthClass} overflow-hidden rounded-md border-2 border-white/80 bg-gradient-to-r ${floorVisual.gradientClass} ${isTopFloor && eventType === "quest-complete" ? "ring-2 ring-cyan-200" : ""}`}
+                  className="absolute left-1/2"
+                  style={{ width: floorWidth, marginLeft: -floorWidth / 2, bottom }}
                 >
-                  <span className="absolute left-1 top-1 h-1.5 w-1.5 rounded-full bg-white/70" />
-                  <span className="absolute right-2 top-1 h-1.5 w-1.5 rounded-full bg-white/60" />
-                  <span className="absolute bottom-0 right-1 text-[9px] opacity-90">{floorVisual.icon}</span>
+                  <PrismSvg
+                    width={floorWidth}
+                    depth={floorDepth}
+                    sideHeight={floorSideHeight}
+                    palette={{
+                      top: palette.top,
+                      left: palette.left,
+                      right: palette.right,
+                      stroke: hexToRgba(palette.accent, 0.14)
+                    }}
+                  />
                 </motion.div>
               );
             })}
           </AnimatePresence>
+
+          <AnimatePresence>
+            {roofPalette ? (
+              <motion.div
+                key={`roof-${displayedRoofType}-${animationEvent?.token ?? 0}`}
+                initial={reducedMotion ? false : { y: 18, opacity: 0, scale: 0.92 }}
+                animate={{ y: 0, opacity: 1, scale: 1 }}
+                transition={{ type: "spring", stiffness: 190, damping: 12 }}
+                className="absolute left-1/2"
+                style={{
+                  width: roofWidth,
+                  marginLeft: -roofWidth / 2,
+                  bottom: stackBottom + visibleFloors * floorSideHeight + 4
+                }}
+              >
+                <PrismSvg
+                  width={roofWidth}
+                  depth={roofDepth}
+                  sideHeight={roofSideHeight}
+                  palette={{
+                    top: roofPalette.top,
+                    left: roofPalette.left,
+                    right: roofPalette.right,
+                    stroke: "rgba(255,255,255,0.88)"
+                  }}
+                />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
 
-        <div className={`${baseHeightClass} ${baseWidthClass} rounded-xl bg-slate-300/90 shadow-inner`} />
         {hiddenFloorCount > 0 ? (
           <span className="rounded-full border border-white/80 bg-white/85 px-2 py-0.5 text-[10px] font-bold text-slate-600 backdrop-blur">
             +{hiddenFloorCount}층
           </span>
         ) : null}
+
+        {height > 0 ? (
+          <span className="rounded-full border border-white/80 bg-white/82 px-2 py-0.5 text-[10px] font-bold text-slate-700 backdrop-blur">
+            {getFloorCountLabel(height, maxVisibleFloors ?? 6)}
+          </span>
+        ) : null}
+
         {displayedRoofType !== "none" ? (
           <span className={`rounded-full border border-white/80 bg-white/80 font-bold text-slate-700 backdrop-blur ${roofLabelClass}`}>
             지붕: {roofTypeLabel[displayedRoofType]}

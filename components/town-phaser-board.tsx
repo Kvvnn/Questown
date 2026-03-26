@@ -2,74 +2,23 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { getBuildingHeight, getDisplayedRoofType } from "@/domain/building";
-import { getDominantQuestType } from "@/domain/quest";
+import {
+  districtGroundPalette,
+  getFloorCountLabel,
+  getIsometricPalette,
+  getRoofPalette,
+  getVisibleCompletedFloorTypes,
+  getVisibleFloorCount,
+  toPhaserColor
+} from "@/domain/isometric-building";
+import { getCompletedQuestTypes } from "@/domain/quest";
 import { TownLayout } from "@/domain/town-map";
-import { DailyRecord, QuestType } from "@/domain/types";
+import { DailyRecord } from "@/domain/types";
 import { cn } from "@/lib/utils";
 
 type PhaserModule = typeof import("phaser");
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
-
-const districtGround = ["0xd2f4e8", "0xd8ecff", "0xe7ddff", "0xffebcc", "0xffd9ea", "0xe6edf7"].map((value) =>
-  Number(value)
-);
-
-const typePalette: Record<
-  QuestType | "empty",
-  { top: number; left: number; right: number; roof: number; accent: number; label: string }
-> = {
-  daily: {
-    top: 0x6ee7b7,
-    left: 0x2bb98e,
-    right: 0x45d1a0,
-    roof: 0x0f766e,
-    accent: 0x042f2e,
-    label: "루틴"
-  },
-  main: {
-    top: 0xfbbf24,
-    left: 0xea8c1e,
-    right: 0xf5a524,
-    roof: 0xc2410c,
-    accent: 0x7c2d12,
-    label: "메인"
-  },
-  sub: {
-    top: 0xc4b5fd,
-    left: 0x8b5cf6,
-    right: 0xa78bfa,
-    roof: 0x6d28d9,
-    accent: 0x4c1d95,
-    label: "서브"
-  },
-  empty: {
-    top: 0xe2e8f0,
-    left: 0xcbd5e1,
-    right: 0xd9e2ec,
-    roof: 0x94a3b8,
-    accent: 0x475569,
-    label: "빈 부지"
-  }
-};
-
-const sceneryPalette = {
-  park: {
-    canopy: 0x34d399,
-    canopyDark: 0x059669,
-    trunk: 0x8b5a2b
-  },
-  plaza: {
-    stone: 0xcbd5e1,
-    stoneDark: 0x94a3b8,
-    accent: 0xffffff
-  },
-  pond: {
-    water: 0x7dd3fc,
-    waterDark: 0x38bdf8,
-    accent: 0xe0f2fe
-  }
-} as const;
 
 interface PlotPoint {
   x: number;
@@ -110,24 +59,10 @@ interface TownPhaserBoardProps {
   className?: string;
 }
 
-const questBadgeLabel = (type: QuestType | null) => typePalette[type ?? "empty"].label;
-
 const toIso = (col: number, row: number, tileWidth: number, tileHeight: number) => ({
   x: (col - row) * (tileWidth / 2),
   y: (col + row) * (tileHeight / 2)
 });
-
-const getVisibleBuildingHeight = (totalFloors: number) => {
-  if (totalFloors <= 0) return 0;
-  const visibleFloors = Math.min(totalFloors, 6);
-  return 20 + visibleFloors * 10;
-};
-
-const floorCountLabel = (totalFloors: number) => {
-  if (totalFloors <= 0) return "빈 부지";
-  if (totalFloors <= 6) return `${totalFloors}F`;
-  return `6F+${totalFloors - 6}`;
-};
 
 const drawPolygon = (
   graphics: Phaser.GameObjects.Graphics,
@@ -311,7 +246,7 @@ const createTownBoard = ({
     }
 
     const ground = scene.add.graphics();
-    const fill = districtGround[districtIndex % districtGround.length];
+    const fill = toPhaserColor(districtGroundPalette[districtIndex % districtGroundPalette.length]);
     drawPolygon(
       ground,
       [
@@ -343,40 +278,54 @@ const createTownBoard = ({
     world.add(tile);
   };
 
-  const drawScenery = (kind: TownLayout["scenery"][number]["kind"], x: number, y: number) => {
-    if (!scene || !world) return;
+  const drawFloorPrism = ({
+    graphics,
+    width,
+    depth,
+    sideHeight,
+    baseOffset,
+    topColor,
+    leftColor,
+    rightColor,
+    strokeColor,
+    strokeAlpha,
+    lineWidth
+  }: {
+    graphics: Phaser.GameObjects.Graphics;
+    width: number;
+    depth: number;
+    sideHeight: number;
+    baseOffset: number;
+    topColor: number;
+    leftColor: number;
+    rightColor: number;
+    strokeColor: number;
+    strokeAlpha: number;
+    lineWidth: number;
+  }) => {
+    const halfWidth = width / 2;
+    const topDiamond: Array<[number, number]> = [
+      [0, -baseOffset - sideHeight - depth / 2],
+      [halfWidth, -baseOffset - sideHeight],
+      [0, -baseOffset - sideHeight + depth / 2],
+      [-halfWidth, -baseOffset - sideHeight]
+    ];
+    const rightFace: Array<[number, number]> = [
+      [halfWidth, -baseOffset - sideHeight],
+      [0, -baseOffset - sideHeight + depth / 2],
+      [0, -baseOffset + depth / 2],
+      [halfWidth, -baseOffset]
+    ];
+    const leftFace: Array<[number, number]> = [
+      [0, -baseOffset - sideHeight + depth / 2],
+      [-halfWidth, -baseOffset - sideHeight],
+      [-halfWidth, -baseOffset],
+      [0, -baseOffset + depth / 2]
+    ];
 
-    const container = scene.add.container(x, y);
-    const graphics = scene.add.graphics();
-
-    if (kind === "park") {
-      graphics.fillStyle(sceneryPalette.park.trunk, 1);
-      graphics.fillRect(-2, -8, 4, 10);
-      graphics.fillStyle(sceneryPalette.park.canopyDark, 1);
-      graphics.fillCircle(-8, -10, 7);
-      graphics.fillCircle(0, -14, 9);
-      graphics.fillCircle(8, -10, 7);
-      graphics.fillStyle(sceneryPalette.park.canopy, 1);
-      graphics.fillCircle(-5, -12, 7);
-      graphics.fillCircle(4, -14, 8);
-    } else if (kind === "plaza") {
-      graphics.fillStyle(sceneryPalette.plaza.stoneDark, 1);
-      graphics.fillRoundedRect(-11, -6, 22, 12, 4);
-      graphics.fillStyle(sceneryPalette.plaza.stone, 1);
-      graphics.fillRoundedRect(-9, -8, 18, 10, 4);
-      graphics.fillStyle(sceneryPalette.plaza.accent, 0.72);
-      graphics.fillCircle(0, -3, 3);
-    } else {
-      graphics.fillStyle(sceneryPalette.pond.waterDark, 1);
-      graphics.fillEllipse(0, 0, 28, 16);
-      graphics.fillStyle(sceneryPalette.pond.water, 1);
-      graphics.fillEllipse(0, -1, 24, 12);
-      graphics.fillStyle(sceneryPalette.pond.accent, 0.9);
-      graphics.fillEllipse(6, -3, 8, 4);
-    }
-
-    container.add(graphics);
-    world.add(container);
+    drawPolygon(graphics, leftFace, leftColor, 1, strokeColor, strokeAlpha, lineWidth);
+    drawPolygon(graphics, rightFace, rightColor, 1, strokeColor, strokeAlpha, lineWidth);
+    drawPolygon(graphics, topDiamond, topColor, 1, strokeColor, strokeAlpha, lineWidth);
   };
 
   const drawBuilding = ({
@@ -400,83 +349,74 @@ const createTownBoard = ({
 
     const point = toIso(col, row, tileWidth, tileHeight);
     const totalFloors = getBuildingHeight(record?.completedCount ?? 0);
-    const height = getVisibleBuildingHeight(totalFloors);
-    const dominantType = getDominantQuestType(record, "completed") ?? getDominantQuestType(record, "total");
-    const palette = typePalette[dominantType ?? "empty"];
+    const visibleFloors = getVisibleFloorCount(totalFloors, 6);
+    const completedQuestTypes = getVisibleCompletedFloorTypes(totalFloors, getCompletedQuestTypes(record?.quests ?? []), 6);
     const roofType = getDisplayedRoofType(totalFloors, record?.roofType ?? "none", Boolean(record?.isFinalized));
+    const roofPalette = getRoofPalette(roofType);
+    const floorWidth = tileWidth * 0.74;
+    const floorDepth = tileHeight * 0.82;
+    const floorSideHeight = Math.max(8, Math.round(tileHeight * 0.62));
+    const roofWidth = floorWidth * 0.8;
+    const roofDepth = floorDepth * 0.84;
+    const roofSideHeight = Math.max(7, floorSideHeight - 1);
     const container = scene.add.container(point.x, point.y);
+    const stackHeight = visibleFloors * floorSideHeight;
 
-    plotPoints.set(date, { x: point.x, y: point.y - height * 0.34, totalFloors });
+    plotPoints.set(date, { x: point.x, y: point.y - stackHeight * 0.72, totalFloors });
 
     const shadow = scene.add.ellipse(0, tileHeight * 0.44, tileWidth * 0.68, tileHeight * 0.38, 0x0f172a, 0.12);
     container.add(shadow);
 
-    if (height <= 0) {
+    if (visibleFloors <= 0) {
       const pad = scene.add.graphics();
-      drawPolygon(
-        pad,
-        [
-          [0, -8],
-          [tileWidth * 0.32, 4],
-          [0, tileHeight * 0.34],
-          [-tileWidth * 0.32, 4]
-        ],
-        palette.top,
-        1,
-        0xffffff,
-        0.68,
-        1
-      );
+      const emptyPalette = getIsometricPalette(null);
+      drawFloorPrism({
+        graphics: pad,
+        width: floorWidth * 0.82,
+        depth: floorDepth * 0.6,
+        sideHeight: Math.max(4, Math.round(floorSideHeight * 0.45)),
+        baseOffset: 0,
+        topColor: toPhaserColor(emptyPalette.top),
+        leftColor: toPhaserColor(emptyPalette.left),
+        rightColor: toPhaserColor(emptyPalette.right),
+        strokeColor: 0xffffff,
+        strokeAlpha: 0.7,
+        lineWidth: 1
+      });
       container.add(pad);
     } else {
       const graphics = scene.add.graphics();
-
-      const topDiamond: Array<[number, number]> = [
-        [0, -height - tileHeight / 2],
-        [tileWidth / 2, -height],
-        [0, -height + tileHeight / 2],
-        [-tileWidth / 2, -height]
-      ];
-      const rightFace: Array<[number, number]> = [
-        [tileWidth / 2, -height],
-        [0, -height + tileHeight / 2],
-        [0, tileHeight / 2],
-        [tileWidth / 2, 0]
-      ];
-      const leftFace: Array<[number, number]> = [
-        [0, -height + tileHeight / 2],
-        [-tileWidth / 2, -height],
-        [-tileWidth / 2, 0],
-        [0, tileHeight / 2]
-      ];
-
-      drawPolygon(graphics, leftFace, palette.left, 1, 0xffffff, 0.5, 1);
-      drawPolygon(graphics, rightFace, palette.right, 1, 0xffffff, 0.5, 1);
-      drawPolygon(
-        graphics,
-        topDiamond,
-        roofType === "none" ? palette.top : palette.roof,
-        1,
-        isSelected ? 0xffffff : 0xe2e8f0,
-        isSelected ? 0.95 : 0.62,
-        isSelected ? 2 : 1
-      );
-
-      if (roofType !== "none") {
-        drawPolygon(
+      completedQuestTypes.forEach((floorType, index) => {
+        const palette = getIsometricPalette(floorType);
+        drawFloorPrism({
           graphics,
-          [
-            [0, -height - tileHeight * 0.64],
-            [tileWidth * 0.24, -height - 4],
-            [0, -height + tileHeight * 0.12],
-            [-tileWidth * 0.24, -height - 4]
-          ],
-          0xffffff,
-          0.24,
-          0xffffff,
-          0.4,
-          1
-        );
+          width: floorWidth,
+          depth: floorDepth,
+          sideHeight: floorSideHeight,
+          baseOffset: index * floorSideHeight,
+          topColor: toPhaserColor(palette.top),
+          leftColor: toPhaserColor(palette.left),
+          rightColor: toPhaserColor(palette.right),
+          strokeColor: isSelected ? 0xffffff : toPhaserColor(palette.accent),
+          strokeAlpha: isSelected ? 0.95 : 0.14,
+          lineWidth: isSelected ? 2 : 1
+        });
+      });
+
+      if (roofPalette) {
+        drawFloorPrism({
+          graphics,
+          width: roofWidth,
+          depth: roofDepth,
+          sideHeight: roofSideHeight,
+          baseOffset: visibleFloors * floorSideHeight + 2,
+          topColor: toPhaserColor(roofPalette.top),
+          leftColor: toPhaserColor(roofPalette.left),
+          rightColor: toPhaserColor(roofPalette.right),
+          strokeColor: 0xffffff,
+          strokeAlpha: 0.88,
+          lineWidth: 1
+        });
       }
 
       container.add(graphics);
@@ -485,11 +425,11 @@ const createTownBoard = ({
     if (isSelected || isCurrent) {
       const marker = scene.add.graphics();
       marker.fillStyle(isSelected ? 0x4f46e5 : 0x0f766e, 1);
-      marker.fillCircle(0, -height - tileHeight * 0.7, isSelected ? 10 : 8);
+      marker.fillCircle(0, -stackHeight - tileHeight * 0.9 - (roofPalette ? roofSideHeight : 0), isSelected ? 10 : 8);
       container.add(marker);
 
       const markerText = scene.add
-        .text(0, -height - tileHeight * 0.7, isSelected ? "선택" : "오늘", {
+        .text(0, -stackHeight - tileHeight * 0.9 - (roofPalette ? roofSideHeight : 0), isSelected ? "선택" : "오늘", {
           fontFamily: "system-ui, sans-serif",
           fontSize: "9px",
           fontStyle: "700",
@@ -499,31 +439,33 @@ const createTownBoard = ({
       container.add(markerText);
     }
 
-    const badge = scene.add
-      .text(0, -height - tileHeight * 0.16, height > 0 ? floorCountLabel(totalFloors) : questBadgeLabel(dominantType), {
-        fontFamily: "system-ui, sans-serif",
-        fontSize: "10px",
-        fontStyle: "700",
-        color: "#0f172a",
-        backgroundColor: "#ffffff"
-      })
-      .setOrigin(0.5);
+    if (totalFloors > 0) {
+      const badge = scene.add
+        .text(0, -stackHeight - tileHeight * 0.22, getFloorCountLabel(totalFloors, 6), {
+          fontFamily: "system-ui, sans-serif",
+          fontSize: "10px",
+          fontStyle: "700",
+          color: "#0f172a",
+          backgroundColor: "#ffffff"
+        })
+        .setOrigin(0.5);
 
-    badge.setPadding(6, 2, 6, 2);
-    badge.setAlpha(0.92);
-    container.add(badge);
+      badge.setPadding(6, 2, 6, 2);
+      badge.setAlpha(0.92);
+      container.add(badge);
+    }
 
-    const questBadge = scene.add
-      .text(0, tileHeight * 0.78, height > 0 ? String(day) : "빈", {
+    const dayBadge = scene.add
+      .text(0, tileHeight * 0.78, String(day), {
         fontFamily: "system-ui, sans-serif",
         fontSize: "11px",
         fontStyle: "700",
         color: "#475569"
       })
       .setOrigin(0.5, 0);
-    container.add(questBadge);
+    container.add(dayBadge);
 
-    const hitZone = scene.add.zone(0, -height * 0.36, tileWidth * 0.96, tileHeight + height + 24);
+    const hitZone = scene.add.zone(0, -stackHeight * 0.36, tileWidth * 0.96, tileHeight + stackHeight + 30);
     hitZone.setInteractive({ useHandCursor: true });
     hitZone.on("pointerup", () => {
       if (!drag.moved) onSelect(date);
@@ -555,12 +497,6 @@ const createTownBoard = ({
         );
       }
     }
-
-    const scenery = [...localSnapshot.layout.scenery].sort((a, b) => a.row + a.col - (b.row + b.col) || a.col - b.col);
-    scenery.forEach((tile) => {
-      const point = toIso(tile.col, tile.row, tileWidth, tileHeight);
-      drawScenery(tile.kind, point.x, point.y - 2);
-    });
 
     const plots = [...localSnapshot.layout.plots].sort((a, b) => a.row + a.col - (b.row + b.col) || a.col - b.col);
     plots.forEach((plot) => {
