@@ -1,43 +1,15 @@
 "use client";
 
-import { memo, useCallback, useEffect, useMemo, useState } from "react";
-import type { KeyboardEvent } from "react";
-import { motion, useReducedMotion } from "framer-motion";
-import { Button, Card } from "@/components/ui";
-import { getBuildingHeight, getDisplayedRoofType, roofTypeLabel } from "@/domain/building";
+import { KeyboardEvent, useCallback, useEffect, useMemo, useRef } from "react";
+import { TownPhaserBoard, TownPhaserBoardHandle } from "@/components/town-phaser-board";
+import { Button } from "@/components/ui";
+import { roofTypeLabel } from "@/domain/building";
 import { getDaysInMonth } from "@/domain/date";
-import { getFloorVisualStyle } from "@/domain/floor-style";
-import { getDominantQuestType, questTypeOrder, questTypeShortLabel } from "@/domain/quest";
-import { createTownLayout, TownLayout, TownPlot } from "@/domain/town-map";
+import { getDominantQuestType, questTypeShortLabel } from "@/domain/quest";
+import { createTownLayout } from "@/domain/town-map";
 import { getPreferredTownDate, moveDateInMonth, TownDirection } from "@/domain/town-navigation";
-import { DailyRecord, QuestType } from "@/domain/types";
+import { DailyRecord } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
-
-const weekdayLabel = ["일", "월", "화", "수", "목", "금", "토"];
-
-const roofColor = {
-  none: "border-b-slate-300",
-  low: "border-b-orange-400",
-  mid: "border-b-amber-500",
-  high: "border-b-emerald-500"
-} as const;
-
-const districtAccent: Record<string, string> = {
-  "Week 1": "bg-cyan-100 text-cyan-700",
-  "Week 2": "bg-violet-100 text-violet-700",
-  "Week 3": "bg-emerald-100 text-emerald-700",
-  "Week 4": "bg-amber-100 text-amber-700",
-  "Week 5": "bg-pink-100 text-pink-700",
-  "Week 6": "bg-slate-100 text-slate-700"
-};
-
-const sceneryVisual: Record<"park" | "plaza" | "pond", { base: string; icon: string }> = {
-  park: { base: "bg-emerald-200/80", icon: "🌳" },
-  plaza: { base: "bg-slate-200/90", icon: "🪧" },
-  pond: { base: "bg-cyan-200/80", icon: "💧" }
-};
-
-const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 const directionByKey: Partial<Record<string, TownDirection>> = {
   ArrowLeft: "left",
@@ -48,156 +20,36 @@ const directionByKey: Partial<Record<string, TownDirection>> = {
   End: "end"
 };
 
-const getCameraTarget = (plot: TownPlot | undefined, layout: TownLayout, reducedMotion: boolean) => {
-  if (!plot) return { x: 0, y: 0, scale: 1 };
-
-  const scale = reducedMotion ? 1 : 1.12;
-  const mapCenterX = layout.mapWidth / 2;
-  const mapCenterY = layout.mapHeight / 2;
-  const focusX = layout.padding + plot.col * layout.slot + layout.tile / 2;
-  const focusY = layout.padding + plot.row * layout.slot + layout.tile / 2;
-
-  return {
-    x: clamp((mapCenterX - focusX) * scale, -layout.mapWidth * 0.26, layout.mapWidth * 0.26),
-    y: clamp((mapCenterY - focusY) * scale, -layout.mapHeight * 0.22, layout.mapHeight * 0.22),
-    scale
-  };
+const districtAccent: Record<string, string> = {
+  "Week 1": "bg-emerald-100 text-emerald-700",
+  "Week 2": "bg-sky-100 text-sky-700",
+  "Week 3": "bg-violet-100 text-violet-700",
+  "Week 4": "bg-amber-100 text-amber-700",
+  "Week 5": "bg-pink-100 text-pink-700",
+  "Week 6": "bg-slate-100 text-slate-700"
 };
 
-const getTypeAccent = (type: QuestType | null) => {
-  if (!type) {
-    return {
-      badgeClass: "bg-slate-100 text-slate-500",
-      icon: "•"
-    };
-  }
-
-  const visual = getFloorVisualStyle(type);
-  return {
-    badgeClass: visual.badgeClass,
-    icon: visual.icon
-  };
+const formatMonthTitle = (monthKey: string) => {
+  const [year, month] = monthKey.split("-");
+  return `${year}년 ${Number(month)}월`;
 };
 
 const getTownDetailEmptyMessage = (date: string, currentDateKey: string) => {
-  if (date === currentDateKey) return "아직 기록이 없어요. 오늘 퀘스트를 완료해서 건물을 세워보세요.";
-  if (date > currentDateKey) return "이 날짜는 아직 오지 않았어요. 오늘을 쌓아 가면 여기에도 건물이 생겨요.";
-  return "이 날짜에는 아직 기록이 없어요.";
+  if (date === currentDateKey) return "오늘 퀘스트를 완료하면 여기에 새 건물이 올라와요.";
+  if (date > currentDateKey) return "아직 오지 않은 날짜예요. 오늘을 쌓아 가면 이 부지도 열립니다.";
+  return "이 날짜에는 아직 세워진 건물이 없어요.";
 };
 
-interface TownLotProps {
-  plot: TownPlot;
-  layout: TownLayout;
-  record?: DailyRecord;
-  currentDateKey: string;
-  selected: boolean;
-  reducedMotion: boolean;
-  onSelect: (date: string) => void;
-  onNavigate: (currentDate: string, direction: TownDirection) => void;
-}
+const getRecordPreview = (record: DailyRecord | undefined) => {
+  if (!record) return [];
 
-const getLotAriaLabel = (plot: TownPlot, floorCount: number, record?: DailyRecord, dominantType?: QuestType | null) => {
-  if (!record) {
-    return `${plot.date} 건물, ${floorCount}층, 아직 기록 없음`;
-  }
-
-  const dominantLabel = dominantType ? `${questTypeShortLabel[dominantType]} 중심` : "타입 미정";
-  const roofLabel = roofTypeLabel[getDisplayedRoofType(record.completedCount, record.roofType, record.isFinalized)];
-
-  return `${plot.date} 건물, ${floorCount}층, 완료 ${record.completedCount}/${record.totalCount}, ${dominantLabel}, ${roofLabel}`;
+  return [...record.quests]
+    .sort((a, b) => Number(a.completed) - Number(b.completed))
+    .slice(0, 3);
 };
-
-const TownLot = memo(function TownLot({
-  plot,
-  layout,
-  record,
-  currentDateKey,
-  selected,
-  reducedMotion,
-  onSelect,
-  onNavigate
-}: TownLotProps) {
-  const height = getBuildingHeight(record?.completedCount ?? 0);
-  const floorCount = height;
-  const roofType = getDisplayedRoofType(record?.completedCount ?? 0, record?.roofType ?? "none", Boolean(record?.isFinalized));
-  const dominantType = getDominantQuestType(record, "completed") ?? getDominantQuestType(record, "total");
-  const typeAccent = getTypeAccent(dominantType);
-
-  const facadeClass = dominantType
-    ? `bg-gradient-to-b ${getFloorVisualStyle(dominantType).gradientClass} border-slate-300`
-    : "bg-gradient-to-b from-slate-300 to-slate-200 border-slate-300";
-
-  const bodyHeight = 20 + Math.min(height, 8) * 3;
-  const windowRows = Math.max(1, Math.min(4, Math.ceil(bodyHeight / 12)));
-  const windowColumns = dominantType === "main" ? 3 : 2;
-
-  return (
-    <button
-      type="button"
-      id={`town-lot-${plot.date}`}
-      onClick={() => onSelect(plot.date)}
-      onKeyDown={(event) => {
-        const direction = directionByKey[event.key];
-        if (!direction) return;
-
-        event.preventDefault();
-        onNavigate(plot.date, direction);
-      }}
-      aria-label={getLotAriaLabel(plot, floorCount, record, dominantType)}
-      aria-pressed={selected}
-      aria-current={plot.date === currentDateKey ? "date" : undefined}
-      className="group absolute text-left outline-none focus-visible:z-10"
-      style={{
-        left: layout.padding + plot.col * layout.slot,
-        top: layout.padding + plot.row * layout.slot,
-        width: layout.tile,
-        height: layout.tile + 22
-      }}
-    >
-      <motion.div
-        animate={reducedMotion ? { y: 0, scale: 1 } : { y: selected ? -5 : 0, scale: selected ? 1.03 : 1 }}
-        transition={{ type: "spring", stiffness: 280, damping: 20 }}
-        className={`relative flex h-[74px] w-full items-end justify-center rounded-xl border border-white/70 bg-gradient-to-b from-slate-50 to-slate-100 p-1 shadow group-focus-visible:ring-2 group-focus-visible:ring-quest-primary group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-sky-100 ${selected ? "ring-2 ring-quest-primary" : ""}`}
-      >
-        <div className="absolute bottom-1 h-2 w-[86%] rounded-full bg-slate-300/85" />
-
-        <div className={`relative w-10 rounded-t-md border ${facadeClass}`} style={{ height: bodyHeight }}>
-          <div
-            className="absolute inset-x-1 bottom-1 top-1 grid gap-1"
-            style={{
-              gridTemplateColumns: `repeat(${windowColumns}, minmax(0, 1fr))`,
-              gridTemplateRows: `repeat(${windowRows}, minmax(0, 1fr))`
-            }}
-          >
-            {Array.from({ length: windowColumns * windowRows }).map((_, index) => (
-              <span key={index} className="rounded-[2px] bg-white/70" />
-            ))}
-          </div>
-        </div>
-
-        {roofType !== "none" ? (
-          <div
-            className={`absolute left-1/2 top-[8px] h-0 w-0 -translate-x-1/2 border-l-[12px] border-r-[12px] border-b-[10px] border-l-transparent border-r-transparent ${roofColor[roofType]}`}
-          />
-        ) : null}
-
-        <span
-          className={`absolute -right-1 -top-1 inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] ${typeAccent.badgeClass}`}
-          title={dominantType ? `${questTypeShortLabel[dominantType]} 중심` : "미정"}
-        >
-          {typeAccent.icon}
-        </span>
-      </motion.div>
-
-      <div className="mt-1 flex items-center justify-between px-0.5 text-[10px] font-bold text-slate-600">
-        <span>{plot.day}</span>
-        <span>{floorCount}F</span>
-      </div>
-    </button>
-  );
-});
 
 export function MonthlyTownView() {
+  const boardRef = useRef<TownPhaserBoardHandle | null>(null);
   const selectedMonth = useQuestownStore((state) => state.selectedMonth);
   const currentDateKey = useQuestownStore((state) => state.currentDateKey);
   const recordsByDate = useQuestownStore((state) => state.recordsByDate);
@@ -209,12 +61,6 @@ export function MonthlyTownView() {
   const layout = useMemo(() => createTownLayout(selectedMonth, dayCount), [selectedMonth, dayCount]);
   const currentMonthKey = currentDateKey.slice(0, 7);
   const canMoveToNextMonth = selectedMonth < currentMonthKey;
-
-  const [cameraNudge, setCameraNudge] = useState({ x: 0, y: 0 });
-
-  useEffect(() => {
-    setCameraNudge({ x: 0, y: 0 });
-  }, [selectedMonth]);
 
   const activeSelectedDate = useMemo(
     () =>
@@ -235,367 +81,229 @@ export function MonthlyTownView() {
 
   const selectedPlot = layout.plots.find((plot) => plot.date === activeSelectedDate);
   const selectedRecord = recordsByDate[activeSelectedDate];
+  const selectedDominantType = getDominantQuestType(selectedRecord, "completed") ?? getDominantQuestType(selectedRecord, "total");
+  const previewQuests = getRecordPreview(selectedRecord);
 
-  const reducedMotion = !!useReducedMotion();
-  const baseCamera = useMemo(() => getCameraTarget(selectedPlot, layout, reducedMotion), [layout, reducedMotion, selectedPlot]);
-  const camera = useMemo(
-    () => ({
-      x: clamp(baseCamera.x + cameraNudge.x, -layout.mapWidth * 0.34, layout.mapWidth * 0.34),
-      y: clamp(baseCamera.y + cameraNudge.y, -layout.mapHeight * 0.28, layout.mapHeight * 0.28),
-      scale: baseCamera.scale
-    }),
-    [baseCamera, cameraNudge.x, cameraNudge.y, layout.mapHeight, layout.mapWidth]
-  );
-
-  const districtSummary = useMemo(() => {
-    const byDistrict = new Map<string, { completed: number; total: number }>();
-
-    layout.plots.forEach((plot) => {
-      const base = byDistrict.get(plot.district) ?? { completed: 0, total: 0 };
-      const record = recordsByDate[plot.date];
-      base.completed += record?.completedCount ?? 0;
-      base.total += record?.totalCount ?? 0;
-      byDistrict.set(plot.district, base);
-    });
-
-    return layout.districts.map((district) => {
-      const value = byDistrict.get(district.name) ?? { completed: 0, total: 0 };
-      return {
-        name: district.name,
-        completed: value.completed,
-        rate: value.total > 0 ? Math.round((value.completed / value.total) * 100) : 0
-      };
-    });
-  }, [layout.districts, layout.plots, recordsByDate]);
-
-  const nudgeCamera = (dx: number, dy: number) => {
-    setCameraNudge((prev) => ({
-      x: clamp(prev.x + dx, -120, 120),
-      y: clamp(prev.y + dy, -90, 90)
-    }));
-  };
-
-  const focusTownLot = useCallback((date: string) => {
-    requestAnimationFrame(() => {
-      document.getElementById(`town-lot-${date}`)?.focus();
-    });
-  }, []);
+  const monthStats = useMemo(() => {
+    return layout.plots.reduce(
+      (summary, plot) => {
+        const record = recordsByDate[plot.date];
+        summary.builtLots += record && record.completedCount > 0 ? 1 : 0;
+        summary.completed += record?.completedCount ?? 0;
+        summary.total += record?.totalCount ?? 0;
+        return summary;
+      },
+      { builtLots: 0, completed: 0, total: 0 }
+    );
+  }, [layout.plots, recordsByDate]);
 
   const moveSelection = useCallback(
-    (currentDate: string | undefined, direction: TownDirection, shouldFocusLot = false) => {
-      const nextDate = moveDateInMonth(currentDate, selectedMonth, dayCount, direction);
+    (direction: TownDirection) => {
+      const nextDate = moveDateInMonth(activeSelectedDate, selectedMonth, dayCount, direction);
       selectDateInTown(nextDate);
-
-      if (shouldFocusLot) {
-        focusTownLot(nextDate);
-      }
+      boardRef.current?.focusDate(nextDate);
     },
-    [dayCount, focusTownLot, selectDateInTown, selectedMonth]
+    [activeSelectedDate, dayCount, selectDateInTown, selectedMonth]
   );
 
-  const handleMapKeyDown = useCallback(
+  const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
-      if (event.target !== event.currentTarget) return;
-
       const direction = directionByKey[event.key];
       if (!direction) return;
 
       event.preventDefault();
-      moveSelection(activeSelectedDate, direction, true);
+      moveSelection(direction);
     },
-    [activeSelectedDate, moveSelection]
+    [moveSelection]
   );
 
   return (
-    <div className="space-y-4" id="town-panel-content">
-      <Card>
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h2 className="text-center text-lg font-black tracking-tight sm:text-left">🏙️ {selectedMonth} Questown 거리</h2>
-          <div className="flex items-center justify-between gap-2 sm:justify-end">
-            <Button type="button" className="min-h-11 bg-slate-100" onClick={() => moveMonth(-1)} aria-label="이전 달 보기">
-              이전 달
+    <div className="flex h-full min-h-0 flex-col gap-3" id="town-panel-content">
+      <header className="rounded-[30px] border border-white/80 bg-white/92 p-3 shadow-[0_18px_34px_rgba(15,23,42,0.08)] backdrop-blur-md">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-black uppercase tracking-[0.26em] text-slate-400">Quest Town</p>
+            <h2 className="truncate text-xl font-black tracking-tight text-slate-900">{formatMonthTitle(selectedMonth)}</h2>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              className="h-11 min-h-0 w-11 rounded-2xl border-0 bg-slate-100 px-0 py-0 text-lg text-slate-700 shadow-none"
+              onClick={() => moveMonth(-1)}
+              aria-label="이전 달 보기"
+            >
+              ‹
             </Button>
             <Button
               type="button"
-              className="min-h-11 bg-slate-100"
+              className="h-11 min-h-0 w-11 rounded-2xl border-0 bg-slate-100 px-0 py-0 text-lg text-slate-700 shadow-none disabled:opacity-40"
               onClick={() => moveMonth(1)}
-              aria-label="다음 달 보기"
-              title={canMoveToNextMonth ? "다음 달 보기" : "현재 달까지만 이동할 수 있어요."}
               disabled={!canMoveToNextMonth}
+              aria-label="다음 달 보기"
             >
-              다음 달
+              ›
             </Button>
           </div>
         </div>
+      </header>
 
-        <div className="mb-3 flex flex-wrap gap-2">
-          {districtSummary.map((district) => (
-            <span
-              key={district.name}
-              className={`rounded-full px-3 py-1 text-xs font-bold ${districtAccent[district.name] ?? "bg-slate-100 text-slate-700"}`}
-            >
-              {district.name} · {district.completed}층 · {district.rate}%
-            </span>
-          ))}
+      <div
+        className="relative min-h-0 flex-1 overflow-hidden rounded-[34px] border border-white/70 bg-[linear-gradient(180deg,#dff5ff_0%,#d9f6ec_48%,#cdecd7_100%)] shadow-[0_24px_40px_rgba(15,23,42,0.12)]"
+        role="region"
+        aria-label="아이소메트릭 타운"
+        tabIndex={0}
+        onKeyDown={handleKeyDown}
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-24 bg-gradient-to-b from-white/40 to-transparent" />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-28 bg-gradient-to-t from-[#b9e2c4]/65 to-transparent" />
+
+        <TownPhaserBoard
+          ref={boardRef}
+          className="absolute inset-0"
+          currentDateKey={currentDateKey}
+          layout={layout}
+          onSelect={selectDateInTown}
+          recordsByDate={recordsByDate}
+          selectedDate={activeSelectedDate}
+        />
+
+        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[70%] flex-wrap gap-2">
+          <span className="rounded-full bg-white/92 px-3 py-1 text-[11px] font-black text-slate-700 shadow-sm">
+            건물 {monthStats.builtLots}/{layout.plots.length}
+          </span>
+          <span className="rounded-full bg-slate-900/88 px-3 py-1 text-[11px] font-black text-white shadow-sm">
+            완료 {monthStats.completed}
+          </span>
         </div>
 
-        <div className="mb-2 grid grid-cols-7 gap-1 text-center text-[11px] font-bold text-slate-500">
-          {weekdayLabel.map((label) => (
-            <span key={label}>{label}</span>
-          ))}
+        <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
+          <Button
+            type="button"
+            className="h-11 min-h-0 w-11 rounded-2xl border-0 bg-white/90 px-0 py-0 text-lg text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.12)]"
+            onClick={() => boardRef.current?.zoomIn()}
+            aria-label="타운 확대"
+          >
+            +
+          </Button>
+          <Button
+            type="button"
+            className="h-11 min-h-0 w-11 rounded-2xl border-0 bg-white/90 px-0 py-0 text-[11px] font-black text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.12)]"
+            onClick={() => boardRef.current?.resetView()}
+            aria-label="타운 위치 재설정"
+          >
+            중앙
+          </Button>
+          <Button
+            type="button"
+            className="h-11 min-h-0 w-11 rounded-2xl border-0 bg-white/90 px-0 py-0 text-lg text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.12)]"
+            onClick={() => boardRef.current?.zoomOut()}
+            aria-label="타운 축소"
+          >
+            −
+          </Button>
         </div>
 
-        <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-2">
-            <p id="town-map-help" className="text-xs text-slate-500">
-              캘린더 배치 기반 타운입니다. 방향키로 날짜를 이동하고, 패드 버튼으로 화면 중심을 미세 조정할 수 있어요.
-            </p>
-            {activeSelectedDate ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
-                <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1">선택 날짜 {activeSelectedDate}</span>
+        <div className="pointer-events-none absolute left-3 top-[68px] z-10">
+          <span className="rounded-full bg-slate-900/70 px-3 py-1 text-[11px] font-semibold text-white/90">
+            드래그로 이동, 탭해서 상세 보기
+          </span>
+        </div>
+
+        <section className="absolute inset-x-0 bottom-0 z-20 rounded-t-[34px] border-t border-white/80 bg-white/94 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-4 shadow-[0_-16px_32px_rgba(15,23,42,0.12)] backdrop-blur-md">
+          <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-200" />
+
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                {selectedPlot ? (
+                  <span
+                    className={`rounded-full px-3 py-1 text-[11px] font-black ${districtAccent[selectedPlot.district] ?? "bg-slate-100 text-slate-700"}`}
+                  >
+                    {selectedPlot.district}
+                  </span>
+                ) : null}
                 {activeSelectedDate === currentDateKey ? (
-                  <span className="rounded-full bg-emerald-100 px-2 py-1 text-emerald-700">오늘</span>
+                  <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-black text-emerald-700">오늘</span>
                 ) : null}
               </div>
-            ) : null}
-          </div>
-          <div
-            role="group"
-            aria-label="맵 화면 조정"
-            className="self-start rounded-2xl border border-white/70 bg-white/70 p-2 shadow-sm sm:self-auto"
-          >
-            <div className="grid grid-cols-3 gap-1">
-              <span className="h-9 w-9" aria-hidden="true" />
-              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(0, -20)} aria-label="맵 위쪽">
-                ▲
-              </Button>
-              <span className="h-9 w-9" aria-hidden="true" />
-              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(-26, 0)} aria-label="맵 왼쪽">
-              ◀
+
+              <h3 className="text-lg font-black tracking-tight text-slate-900">
+                {selectedPlot ? `${selectedPlot.day}일 타운 빌딩` : "건물을 선택해 주세요"}
+              </h3>
+              <p className="text-sm text-slate-500">{activeSelectedDate}</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                className="h-11 min-h-0 rounded-2xl border-0 bg-slate-100 px-4 py-0 text-sm font-black text-slate-700 shadow-none"
+                onClick={() => moveSelection("left")}
+                aria-label="이전 날짜"
+              >
+                이전
               </Button>
               <Button
                 type="button"
-                className="h-9 min-h-0 bg-white px-2 py-0 text-[10px]"
-                onClick={() => setCameraNudge({ x: 0, y: 0 })}
-                aria-label="맵 중앙으로 재설정"
+                className="h-11 min-h-0 rounded-2xl border-0 bg-slate-100 px-4 py-0 text-sm font-black text-slate-700 shadow-none"
+                onClick={() => moveSelection("right")}
+                aria-label="다음 날짜"
               >
-                중앙
+                다음
               </Button>
-              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(26, 0)} aria-label="맵 오른쪽">
-              ▶
-              </Button>
-              <span className="h-9 w-9" aria-hidden="true" />
-              <Button type="button" className="h-9 min-h-0 w-9 bg-slate-100 px-0 py-0" onClick={() => nudgeCamera(0, 20)} aria-label="맵 아래쪽">
-              ▼
-              </Button>
-              <span className="h-9 w-9" aria-hidden="true" />
             </div>
           </div>
-        </div>
 
-        <div
-          role="region"
-          aria-label="월간 타운 맵"
-          aria-describedby="town-map-help"
-          tabIndex={0}
-          onKeyDown={handleMapKeyDown}
-          className="relative h-[420px] overflow-hidden rounded-3xl border border-white/60 bg-gradient-to-b from-sky-100 via-cyan-50 to-emerald-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-quest-primary"
-        >
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(255,255,255,0.65),transparent_45%),radial-gradient(circle_at_85%_18%,rgba(196,181,253,0.35),transparent_45%)]" />
-
-          <motion.div
-            className="absolute left-1/2 top-1/2"
-            style={{
-              width: layout.mapWidth,
-              height: layout.mapHeight,
-              marginLeft: -layout.mapWidth / 2,
-              marginTop: -layout.mapHeight / 2
-            }}
-            animate={camera}
-            transition={reducedMotion ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 24 }}
-          >
-            {layout.districts.map((district) => {
-              const top = layout.padding + district.rowStart * layout.slot - layout.gap / 2;
-              const height = (district.rowEnd - district.rowStart + 1) * layout.slot + layout.gap;
-
-              return (
-                <div
-                  key={district.name}
-                  className={`pointer-events-none absolute left-2 right-2 rounded-2xl bg-gradient-to-r ${district.tintClass}`}
-                  style={{ top, height }}
-                >
-                  <span className="absolute left-2 top-1 text-[10px] font-black uppercase tracking-wide text-slate-500/80">
-                    {district.name}
-                  </span>
+          {!selectedRecord ? (
+            <div className="mt-4 rounded-[26px] bg-slate-50 px-4 py-4 text-sm text-slate-600">
+              <p className="font-bold text-slate-800">아직 빈 부지예요.</p>
+              <p className="mt-1 leading-relaxed">{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
+            </div>
+          ) : (
+            <>
+              <div className="mt-4 grid grid-cols-3 gap-2">
+                <div className="rounded-[22px] bg-slate-50 px-3 py-3">
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">완료</p>
+                  <p className="mt-1 text-base font-black text-slate-900">
+                    {selectedRecord.completedCount}/{selectedRecord.totalCount}
+                  </p>
                 </div>
-              );
-            })}
-
-            {layout.roadCols.map((col) => (
-              <div
-                key={`road-col-${col}`}
-                className="pointer-events-none absolute top-0 bottom-0 w-[12px] rounded-full bg-slate-300/65"
-                style={{
-                  left: layout.padding + (col + 1) * layout.slot - layout.gap / 2 - 6,
-                  backgroundImage:
-                    "repeating-linear-gradient(to bottom, rgba(255,255,255,0.75) 0 8px, transparent 8px 16px)"
-                }}
-              />
-            ))}
-
-            {layout.roadRows.map((row) => (
-              <div
-                key={`road-row-${row}`}
-                className="pointer-events-none absolute left-0 right-0 h-[12px] rounded-full bg-slate-300/65"
-                style={{
-                  top: layout.padding + (row + 1) * layout.slot - layout.gap / 2 - 6,
-                  backgroundImage:
-                    "repeating-linear-gradient(to right, rgba(255,255,255,0.75) 0 8px, transparent 8px 16px)"
-                }}
-              />
-            ))}
-
-            {layout.scenery.map((tile) => {
-              const visual = sceneryVisual[tile.kind];
-              return (
-                <div
-                  key={tile.key}
-                  className={`pointer-events-none absolute flex h-7 w-7 items-center justify-center rounded-xl text-[11px] ${visual.base}`}
-                  style={{
-                    left: layout.padding + tile.col * layout.slot + layout.tile / 2 - 14,
-                    top: layout.padding + tile.row * layout.slot + layout.tile / 2 - 14
-                  }}
-                >
-                  {visual.icon}
+                <div className="rounded-[22px] bg-slate-50 px-3 py-3">
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">지붕</p>
+                  <p className="mt-1 text-base font-black text-slate-900">{roofTypeLabel[selectedRecord.roofType]}</p>
                 </div>
-              );
-            })}
-
-            {layout.plots.map((plot) => (
-              <TownLot
-                key={plot.date}
-                plot={plot}
-                layout={layout}
-                record={recordsByDate[plot.date]}
-                currentDateKey={currentDateKey}
-                selected={activeSelectedDate === plot.date}
-                reducedMotion={reducedMotion}
-                onSelect={selectDateInTown}
-                onNavigate={(currentDate, direction) => moveSelection(currentDate, direction, true)}
-              />
-            ))}
-          </motion.div>
-        </div>
-
-        <div className="mt-3 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
-          <div className="metric-pill flex items-center justify-center gap-1">🏢 빌딩 부지</div>
-          <div className="metric-pill flex items-center justify-center gap-1">🛣️ 거리 그리드</div>
-          <div className="metric-pill flex items-center justify-center gap-1">🔖 중심 퀘스트</div>
-        </div>
-      </Card>
-
-      <Card>
-        <h3 className="mb-2 text-lg font-black">빌딩 상세</h3>
-
-        {selectedPlot ? (
-          <span
-            className={`mb-2 inline-flex rounded-full px-3 py-1 text-xs font-bold ${districtAccent[selectedPlot.district] ?? "bg-slate-100 text-slate-700"}`}
-          >
-            {selectedPlot.district} · {selectedPlot.day}일
-          </span>
-        ) : null}
-
-        {!activeSelectedDate ? (
-          <p className="text-sm text-slate-500">타운에서 건물을 선택하면 상세를 보여줍니다.</p>
-        ) : !selectedRecord ? (
-          <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-4 text-sm text-slate-600">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">선택 날짜</p>
-            <p className="mt-1 text-base font-black text-slate-800">{activeSelectedDate}</p>
-            <p className="mt-2 leading-relaxed">{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
-          </div>
-        ) : (
-          <div className="space-y-4 text-sm">
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <div className="metric-pill text-left">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">날짜</p>
-                <p className="mt-1 text-sm font-black text-slate-800">{selectedRecord.date}</p>
-              </div>
-              <div className="metric-pill text-left">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">완료</p>
-                <p className="mt-1 text-sm font-black text-slate-800">
-                  {selectedRecord.completedCount}/{selectedRecord.totalCount}
-                </p>
-              </div>
-              <div className="metric-pill text-left">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">완료율</p>
-                <p className="mt-1 text-sm font-black text-slate-800">
-                  {Math.round(selectedRecord.completionRate * 100)}%
-                </p>
-              </div>
-              <div className="metric-pill text-left">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">지붕 / 상태</p>
-                <p className="mt-1 text-sm font-black text-slate-800">
-                  {roofTypeLabel[
-                    getDisplayedRoofType(selectedRecord.completedCount, selectedRecord.roofType, selectedRecord.isFinalized)
-                  ]}{" "}
-                  · {selectedRecord.isFinalized ? "마감됨" : "진행 중"}
-                </p>
-              </div>
-            </div>
-
-            <div>
-              <h4 className="mb-2 text-sm font-bold text-slate-700">타입별 진행</h4>
-              <div className="grid grid-cols-3 gap-2">
-                {questTypeOrder.map((type) => {
-                  const visual = getFloorVisualStyle(type);
-                  return (
-                    <div key={type} className={`rounded-xl px-2 py-2 text-center text-xs font-bold ${visual.badgeClass}`}>
-                      {questTypeShortLabel[type]} {selectedRecord.completedByType[type]}/{selectedRecord.totalByType[type]}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div>
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <h4 className="text-sm font-bold text-slate-700">퀘스트 목록</h4>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600">
-                  {selectedRecord.quests.length}개
-                </span>
+                <div className="rounded-[22px] bg-slate-50 px-3 py-3">
+                  <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">중심</p>
+                  <p className="mt-1 text-base font-black text-slate-900">
+                    {selectedDominantType ? questTypeShortLabel[selectedDominantType] : "혼합"}
+                  </p>
+                </div>
               </div>
 
-              {selectedRecord.quests.length === 0 ? (
-                <p className="rounded-xl bg-slate-50 px-3 py-2 text-slate-500">등록된 퀘스트가 없어요.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {selectedRecord.quests.map((quest) => {
-                    const visual = getFloorVisualStyle(quest.type);
-                    return (
-                      <li
-                        key={quest.id}
-                        className="flex items-start gap-2 rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2 shadow-sm"
-                      >
-                        <span className="mt-0.5 text-sm">{quest.completed ? "✅" : "⬜"}</span>
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${visual.badgeClass}`}>
-                              {questTypeShortLabel[quest.type]}
-                            </span>
-                            <span className={`text-sm ${quest.completed ? "text-slate-400 line-through" : "text-slate-700"}`}>
-                              {quest.title}
-                            </span>
-                          </div>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-          </div>
-        )}
-      </Card>
+              <div className="mt-4 flex flex-col gap-2">
+                {previewQuests.map((quest) => (
+                  <div key={quest.id} className="flex items-center justify-between rounded-[20px] bg-slate-50 px-3 py-3">
+                    <span className="truncate pr-3 text-sm font-semibold text-slate-700">{quest.title}</span>
+                    <span
+                      className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-black ${
+                        quest.completed ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                      }`}
+                    >
+                      {quest.completed ? "완료" : "대기"}
+                    </span>
+                  </div>
+                ))}
+
+                {selectedRecord.quests.length > previewQuests.length ? (
+                  <p className="px-1 text-xs font-semibold text-slate-500">
+                    퀘스트 {selectedRecord.quests.length - previewQuests.length}개가 더 있어요.
+                  </p>
+                ) : null}
+              </div>
+            </>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
