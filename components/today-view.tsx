@@ -6,13 +6,20 @@ import { AnimatedNumber } from "@/components/animated-number";
 import { CssFramerBuildingRenderer } from "@/components/animated-building";
 import { RewardToastItem, RewardToasts } from "@/components/reward-toasts";
 import { Button } from "@/components/ui";
-import { QuestAnimationEventType, idleQuestAnimationEvent } from "@/domain/animation";
+import {
+  buildQuestRewardQueue,
+  findNewlyCompletedQuest,
+  getRoofPreviewType,
+  QuestAnimationEventType,
+  idleQuestAnimationEvent
+} from "@/domain/animation";
 import { getDisplayedRoofType } from "@/domain/building";
 import { getExecutionQueue, normalizeQuestPriority, priorityLabel } from "@/domain/execution";
 import { getFloorVisualStyle } from "@/domain/floor-style";
 import { getStreakCount } from "@/domain/progress";
 import { getCompletedQuestTypes, questTypeShortLabel } from "@/domain/quest";
-import { QuestItem, QuestPriority, QuestType, RecurrencePattern } from "@/domain/types";
+import { getHeroQuestCandidate } from "@/domain/selectors";
+import { QuestItem, QuestPriority, QuestType, RecurrencePattern, RoofType } from "@/domain/types";
 import { useQuestownStore, useTodayBuildingHeight, useTodayRecord } from "@/store/questown-store";
 
 type SheetType = "list" | "add" | null;
@@ -91,15 +98,16 @@ export function TodayView() {
   const [banner, setBanner] = useState<{ text: string; tone: BannerTone } | null>(null);
   const [toasts, setToasts] = useState<RewardToastItem[]>([]);
   const [animationEvent, setAnimationEvent] = useState(idleQuestAnimationEvent);
+  const [previewRoofType, setPreviewRoofType] = useState<RoofType>("none");
 
   const titleInputRef = useRef<HTMLInputElement | null>(null);
   const eventTimeoutRefs = useRef<number[]>([]);
   const toastTimeoutRefs = useRef<number[]>([]);
+  const roofPreviewTimeoutRef = useRef<number | null>(null);
   const initializedRef = useRef(false);
   const toastIdRef = useRef(1);
   const previousRef = useRef({
-    completedCount: record.completedCount,
-    isFinalized: record.isFinalized,
+    record,
     streak: 0
   });
 
@@ -110,10 +118,13 @@ export function TodayView() {
   const toggleQuest = useQuestownStore((state) => state.toggleQuest);
   const deleteQuest = useQuestownStore((state) => state.deleteQuest);
   const updateQuestMeta = useQuestownStore((state) => state.updateQuestMeta);
+  const setFocusQuest = useQuestownStore((state) => state.setFocusQuest);
+  const clearFocusQuest = useQuestownStore((state) => state.clearFocusQuest);
   const finalizeCurrentDay = useQuestownStore((state) => state.finalizeCurrentDay);
   const setTab = useQuestownStore((state) => state.setTab);
 
   const displayedRoofType = getDisplayedRoofType(record.completedCount, record.roofType, record.isFinalized);
+  const buildingRoofType = previewRoofType !== "none" && !record.isFinalized ? previewRoofType : displayedRoofType;
   const percent = Math.round(record.completionRate * 100);
   const streak = useMemo(
     () => getStreakCount(recordsByDate, currentDateKey, dailyGoal),
@@ -123,6 +134,7 @@ export function TodayView() {
   const completedQuestTypes = useMemo(() => getCompletedQuestTypes(record.quests), [record.quests]);
   const questMap = useMemo(() => new Map(record.quests.map((quest) => [quest.id, quest] as const)), [record.quests]);
   const executionQueue = useMemo(() => getExecutionQueue(record.quests), [record.quests]);
+  const heroCandidate = useMemo(() => getHeroQuestCandidate(record), [record]);
   const remainingQuests = useMemo(() => executionQueue.map((item) => item.quest), [executionQueue]);
   const completedQuests = useMemo(
     () =>
@@ -136,11 +148,8 @@ export function TodayView() {
     [record.quests]
   );
 
-  const primaryQueueItem = executionQueue[0] ?? null;
-  const primaryQuest = primaryQueueItem?.quest ?? null;
-  const primaryBlockedTitle = primaryQueueItem?.blockedByIds
-    ?.map((id) => questMap.get(id)?.title)
-    .filter((title): title is string => Boolean(title))[0];
+  const primaryQuest = heroCandidate?.quest ?? null;
+  const heroTypeVisual = primaryQuest ? getFloorVisualStyle(primaryQuest.type) : null;
 
   const heroState = useMemo(() => {
     if (record.isFinalized) {
@@ -163,7 +172,7 @@ export function TodayView() {
       };
     }
 
-    if (executionQueue.length === 0) {
+    if (!heroCandidate) {
       return {
         mode: "done" as const,
         eyebrow: "마무리",
@@ -173,24 +182,26 @@ export function TodayView() {
       };
     }
 
-    if (primaryQueueItem && primaryQueueItem.blockedByIds.length > 0) {
+    if (heroCandidate.blockedByIds.length > 0) {
       return {
         mode: "blocked" as const,
-        eyebrow: "대기 중",
-        title: primaryQueueItem.quest.title,
-        description: primaryBlockedTitle ? `${primaryBlockedTitle}부터 끝내면 열려요.` : "먼저 선행 퀘스트를 확인해야 해요.",
-        cta: "퀘스트 목록"
+        eyebrow: heroCandidate.isFocused ? "대표 퀘스트" : "대기 중",
+        title: heroCandidate.quest.title,
+        description: heroCandidate.blockedReason ?? "먼저 선행 퀘스트를 확인해야 해요.",
+        cta: "막힌 이유 보기"
       };
     }
 
     return {
       mode: "quest" as const,
-      eyebrow: "지금 할 일",
-      title: primaryQuest?.title ?? "다음 퀘스트",
-      description: "이것 하나만 끝내면 바로 다음 단계로 넘어갑니다.",
-      cta: "완료하기"
+      eyebrow: heroCandidate.isFocused ? "대표 퀘스트" : "지금 할 일",
+      title: heroCandidate.quest.title,
+      description: heroCandidate.isFocused
+        ? "오늘의 대표 퀘스트예요. 이것부터 끝내면 흐름이 붙습니다."
+        : "이것 하나만 끝내면 바로 다음 단계로 넘어갑니다.",
+      cta: heroCandidate.isFocused ? "대표 퀘스트 완료" : "지금 완료"
     };
-  }, [executionQueue.length, primaryBlockedTitle, primaryQuest?.title, primaryQueueItem, record.isFinalized, record.totalCount]);
+  }, [heroCandidate, record.isFinalized, record.totalCount]);
 
   const clearEventQueue = useCallback(() => {
     eventTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
@@ -201,6 +212,14 @@ export function TodayView() {
     toastTimeoutRefs.current.forEach((id) => window.clearTimeout(id));
     toastTimeoutRefs.current = [];
     setToasts([]);
+  }, []);
+
+  const clearRoofPreview = useCallback(() => {
+    if (roofPreviewTimeoutRef.current !== null) {
+      window.clearTimeout(roofPreviewTimeoutRef.current);
+      roofPreviewTimeoutRef.current = null;
+    }
+    setPreviewRoofType("none");
   }, []);
 
   const pushToast = useCallback((text: string, tone: RewardToastItem["tone"] = "info") => {
@@ -233,8 +252,9 @@ export function TodayView() {
     return () => {
       clearEventQueue();
       clearToastQueue();
+      clearRoofPreview();
     };
-  }, [clearEventQueue, clearToastQueue]);
+  }, [clearEventQueue, clearRoofPreview, clearToastQueue]);
 
   useEffect(() => {
     if (!banner) return undefined;
@@ -250,45 +270,44 @@ export function TodayView() {
     if (!initializedRef.current) {
       initializedRef.current = true;
       previousRef.current = {
-        completedCount: record.completedCount,
-        isFinalized: record.isFinalized,
+        record,
         streak
       };
       return;
     }
 
     const prev = previousRef.current;
-    const queue: Array<{ type: QuestAnimationEventType; text: string; tone: RewardToastItem["tone"] }> = [];
-
-    if (record.completedCount > prev.completedCount) {
-      queue.push({
-        type: "quest-complete",
-        text: "+1층 · 퀘스트 완료",
-        tone: "success"
-      });
+    if (prev.record.date !== record.date) {
+      clearEventQueue();
+      clearRoofPreview();
+      previousRef.current = { record, streak };
+      return;
     }
 
-    if (!prev.isFinalized && record.isFinalized) {
-      queue.push({
-        type: "day-finalized",
-        text: "지붕 완성! 오늘 기록이 저장됐어요.",
-        tone: "epic"
-      });
-    }
-
-    if (streak > prev.streak) {
-      queue.push({
-        type: "streak-up",
-        text: `🔥 ${streak}일 연속 달성!`,
-        tone: "epic"
-      });
-    }
+    const newlyCompletedQuest = findNewlyCompletedQuest(prev.record.quests, record.quests);
+    const queue = buildQuestRewardQueue({
+      previous: prev.record,
+      next: record,
+      previousStreak: prev.streak,
+      nextStreak: streak,
+      dailyGoal,
+      newlyCompletedQuest
+    });
+    const nextPreviewRoofType = getRoofPreviewType(record);
 
     clearEventQueue();
 
     queue.forEach((event, index) => {
       const timeout = window.setTimeout(() => {
         eventTimeoutRefs.current = eventTimeoutRefs.current.filter((id) => id !== timeout);
+        if (event.type === "roof-preview") {
+          clearRoofPreview();
+          setPreviewRoofType(nextPreviewRoofType);
+          roofPreviewTimeoutRef.current = window.setTimeout(() => {
+            roofPreviewTimeoutRef.current = null;
+            setPreviewRoofType("none");
+          }, 1100);
+        }
         triggerReward(event.type, event.text, event.tone);
       }, index * 220);
 
@@ -296,11 +315,10 @@ export function TodayView() {
     });
 
     previousRef.current = {
-      completedCount: record.completedCount,
-      isFinalized: record.isFinalized,
+      record,
       streak
     };
-  }, [clearEventQueue, record.completedCount, record.isFinalized, streak, triggerReward]);
+  }, [clearEventQueue, clearRoofPreview, dailyGoal, record, streak, triggerReward]);
 
   useEffect(() => {
     if (activeSheet !== "add") return;
@@ -374,6 +392,19 @@ export function TodayView() {
     }
 
     setBanner(null);
+  };
+
+  const handleToggleFocusQuest = (quest: QuestItem) => {
+    const result = quest.focusPinned ? clearFocusQuest() : setFocusQuest(quest.id);
+    if (!result.ok) {
+      setBanner({ text: result.reason ?? "대표 퀘스트를 바꿀 수 없어요.", tone: "error" });
+      return;
+    }
+
+    setBanner({
+      text: quest.focusPinned ? "대표 퀘스트를 해제했어요." : "대표 퀘스트로 고정했어요.",
+      tone: "success"
+    });
   };
 
   const handlePrimaryAction = () => {
@@ -459,19 +490,38 @@ export function TodayView() {
           />
 
           <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className={`text-sm font-semibold ${quest.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
-                {quest.title}
-              </span>
-              <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${typeVisual.badgeClass}`}>
-                {typeVisual.icon} {questTypeShortLabel[quest.type]}
-              </span>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className={`text-sm font-semibold ${quest.completed ? "text-slate-400 line-through" : "text-slate-800"}`}>
+                    {quest.title}
+                  </span>
+                  <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${typeVisual.badgeClass}`}>
+                    {typeVisual.icon} {questTypeShortLabel[quest.type]}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                disabled={record.isFinalized}
+                onClick={() => handleToggleFocusQuest(quest)}
+                className={`shrink-0 rounded-full px-3 py-1.5 text-[11px] font-black transition ${
+                  quest.focusPinned
+                    ? "bg-amber-100 text-amber-800 shadow-[0_8px_18px_rgba(251,191,36,0.24)]"
+                    : "bg-slate-100 text-slate-600"
+                } ${record.isFinalized ? "opacity-50" : ""}`}
+              >
+                {quest.focusPinned ? "대표중" : "대표"}
+              </button>
             </div>
 
             {isBlocked ? (
               <p className="mt-1 text-[11px] font-semibold text-rose-600">먼저 {blockedByTitles.join(", ")} 완료</p>
             ) : quest.completed ? (
               <p className="mt-1 text-[11px] font-semibold text-emerald-600">완료됨</p>
+            ) : quest.focusPinned ? (
+              <p className="mt-1 text-[11px] font-semibold text-amber-700">오늘의 대표 퀘스트</p>
             ) : null}
 
             <details className="mt-2">
@@ -554,7 +604,7 @@ export function TodayView() {
             <div className="flex min-h-0 flex-1 items-center justify-center py-4">
               {CssFramerBuildingRenderer.render({
                 height,
-                roofType: displayedRoofType,
+                roofType: buildingRoofType,
                 finalized: record.isFinalized,
                 animationEvent,
                 reducedMotion: reduceMotion,
@@ -565,6 +615,17 @@ export function TodayView() {
             </div>
 
             <div className="text-center">
+              {primaryQuest ? (
+                <div className="mb-3 flex flex-wrap items-center justify-center gap-2">
+                  <span className={`rounded-full px-3 py-1.5 text-[11px] font-black ${heroTypeVisual?.badgeClass ?? "bg-slate-100 text-slate-600"}`}>
+                    {heroTypeVisual?.icon ?? "🏗️"} {questTypeShortLabel[primaryQuest.type]}
+                  </span>
+                  {heroCandidate?.isFocused ? (
+                    <span className="rounded-full bg-amber-100 px-3 py-1.5 text-[11px] font-black text-amber-800">대표 퀘스트</span>
+                  ) : null}
+                </div>
+              ) : null}
+
               <h2 className="mx-auto max-h-[96px] max-w-[260px] overflow-hidden text-[30px] font-black leading-8 text-slate-900">
                 {heroState.title}
               </h2>

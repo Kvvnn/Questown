@@ -185,6 +185,51 @@ describe("questown store safeguards", () => {
     expect(nextQuests.find((quest) => quest.title === "두 번째 퀘스트")?.completed).toBe(false);
   });
 
+  it("builds a backup preview before applying imported records", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+    useQuestownStore.getState().addQuest({ title: "원본 유지", type: "main" });
+
+    const previewResult = useQuestownStore.getState().previewBackupImport(
+      createBackupData(currentDateKey, {
+        [currentDateKey]: {
+          quests: [
+            {
+              id: "preview-main",
+              title: "미리보기 메인",
+              type: "main",
+              completed: true,
+              createdAt: "2026-03-25T00:00:00.000Z"
+            }
+          ]
+        },
+        [currentDateKey.slice(0, 8) + "26"]: {
+          quests: [
+            {
+              id: "preview-sub",
+              title: "미리보기 서브",
+              type: "sub",
+              completed: false,
+              createdAt: "2026-03-26T00:00:00.000Z"
+            }
+          ]
+        }
+      }) as never
+    );
+
+    expect(previewResult.ok).toBe(true);
+    if (!previewResult.ok) return;
+
+    expect(previewResult.preview.dateCount).toBeGreaterThanOrEqual(2);
+    expect(previewResult.preview.overwriteDateCount).toBe(1);
+    expect(previewResult.preview.newDateCount).toBeGreaterThanOrEqual(1);
+
+    const applyResult = useQuestownStore.getState().applyBackupImport(previewResult.preview);
+    expect(applyResult.ok).toBe(true);
+    expect(
+      useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.some((quest) => quest.title === "미리보기 메인")
+    ).toBe(true);
+  });
+
   it("falls back to legacy text when an imported title is empty", () => {
     const { currentDateKey } = useQuestownStore.getState();
 
@@ -402,6 +447,24 @@ describe("questown store safeguards", () => {
     expect(useQuestownStore.getState().recordsByDate[currentDateKey]?.quests.map((quest) => quest.title)).toContain("원본 유지");
   });
 
+  it("rejects backup imports when the backup version is newer than supported", () => {
+    const { currentDateKey } = useQuestownStore.getState();
+
+    const result = useQuestownStore.getState().importBackup({
+      version: 99,
+      exportedAt: "2026-03-25T00:00:00.000Z",
+      state: {
+        currentDateKey,
+        selectedMonth: currentDateKey.slice(0, 7),
+        dailyGoal: 3,
+        weeklyMainTarget: 10,
+        recordsByDate: {}
+      }
+    });
+
+    expect(result).toEqual({ ok: false, reason: "지원하지 않는 백업 버전이에요." });
+  });
+
   it("rejects backup imports when state schema fields have invalid types", () => {
     const { currentDateKey } = useQuestownStore.getState();
     useQuestownStore.getState().addQuest({ title: "원본 유지", type: "main" });
@@ -494,5 +557,168 @@ describe("questown store safeguards", () => {
     const nextDateKey = useQuestownStore.getState().currentDateKey;
     const nextQuests = useQuestownStore.getState().recordsByDate[nextDateKey]?.quests ?? [];
     expect(nextQuests.map((quest) => quest.title)).toEqual(expect.arrayContaining(["아침 산책", "물 마시기"]));
+  });
+
+  it("keeps exactly one focusPinned quest when setFocusQuest is called repeatedly", () => {
+    const addMain = useQuestownStore.getState().addQuest({ title: "대표 후보 1", type: "main" });
+    const addSub = useQuestownStore.getState().addQuest({ title: "대표 후보 2", type: "sub" });
+    expect(addMain.ok).toBe(true);
+    expect(addSub.ok).toBe(true);
+
+    const dateKey = useQuestownStore.getState().currentDateKey;
+    const quests = useQuestownStore.getState().recordsByDate[dateKey]?.quests ?? [];
+    const firstQuestId = quests.find((quest) => quest.title === "대표 후보 1")?.id;
+    const secondQuestId = quests.find((quest) => quest.title === "대표 후보 2")?.id;
+    expect(firstQuestId).toBeTruthy();
+    expect(secondQuestId).toBeTruthy();
+
+    expect(useQuestownStore.getState().setFocusQuest(firstQuestId as string)).toEqual({ ok: true });
+    expect(useQuestownStore.getState().setFocusQuest(secondQuestId as string)).toEqual({ ok: true });
+
+    const nextQuests = useQuestownStore.getState().recordsByDate[dateKey]?.quests ?? [];
+    expect(nextQuests.filter((quest) => quest.focusPinned)).toHaveLength(1);
+    expect(nextQuests.find((quest) => quest.id === secondQuestId)?.focusPinned).toBe(true);
+    expect(nextQuests.find((quest) => quest.id === firstQuestId)?.focusPinned).toBe(false);
+  });
+
+  it("clears focusPinned quests and blocks focus changes on finalized days", () => {
+    const addMain = useQuestownStore.getState().addQuest({ title: "대표 후보", type: "main" });
+    expect(addMain.ok).toBe(true);
+
+    const dateKey = useQuestownStore.getState().currentDateKey;
+    const questId = useQuestownStore.getState().recordsByDate[dateKey]?.quests[0]?.id;
+    expect(questId).toBeTruthy();
+
+    expect(useQuestownStore.getState().setFocusQuest(questId as string)).toEqual({ ok: true });
+    expect(useQuestownStore.getState().clearFocusQuest()).toEqual({ ok: true });
+
+    const clearedQuests = useQuestownStore.getState().recordsByDate[dateKey]?.quests ?? [];
+    expect(clearedQuests.some((quest) => quest.focusPinned)).toBe(false);
+
+    useQuestownStore.getState().finalizeCurrentDay();
+
+    expect(useQuestownStore.getState().setFocusQuest(questId as string)).toEqual({
+      ok: false,
+      reason: "마감된 날짜는 수정할 수 없어요."
+    });
+    expect(useQuestownStore.getState().clearFocusQuest()).toEqual({
+      ok: false,
+      reason: "마감된 날짜는 대표 퀘스트를 바꿀 수 없어요."
+    });
+  });
+
+  it("surfaces a recovery notice when persisted JSON is malformed", async () => {
+    vi.resetModules();
+
+    const brokenStorage = {
+      getItem: vi.fn(() => "{broken-json"),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn()
+    };
+
+    vi.stubGlobal("localStorage", brokenStorage);
+    ({ useQuestownStore } = await import("./questown-store"));
+
+    await useQuestownStore.persist.rehydrate();
+
+    expect(useQuestownStore.getState().recoveryNotice).toBe("저장된 앱 데이터를 읽는 중 문제가 있어 안전한 상태로 복구했어요.");
+    expect(brokenStorage.removeItem).toHaveBeenCalledWith("questown-mvp-storage");
+  });
+
+  it("marks storage health as degraded when reading persisted state throws", async () => {
+    vi.resetModules();
+
+    const brokenStorage = {
+      getItem: vi.fn(() => {
+        throw new Error("read failed");
+      }),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn()
+    };
+
+    vi.stubGlobal("localStorage", brokenStorage);
+    ({ useQuestownStore } = await import("./questown-store"));
+
+    await useQuestownStore.persist.rehydrate();
+
+    expect(useQuestownStore.getState().storageHealth).toMatchObject({
+      readable: false,
+      degraded: true,
+      lastError: "read failed"
+    });
+    expect(useQuestownStore.getState().storageNotice).toBe(
+      "브라우저 저장소 접근에 문제가 있어 일부 변경이 저장되지 않을 수 있어요."
+    );
+  });
+
+  it("keeps in-memory state alive when writing to storage fails", async () => {
+    vi.resetModules();
+
+    const brokenStorage = {
+      getItem: vi.fn(() => null),
+      setItem: vi.fn(() => {
+        throw new Error("write failed");
+      }),
+      removeItem: vi.fn(),
+      clear: vi.fn()
+    };
+
+    vi.stubGlobal("localStorage", brokenStorage);
+    ({ useQuestownStore } = await import("./questown-store"));
+    useQuestownStore.setState(useQuestownStore.getInitialState(), true);
+
+    const result = useQuestownStore.getState().addQuest({ title: "메모리 유지", type: "main" });
+
+    expect(result.ok).toBe(true);
+    expect(useQuestownStore.getState().storageHealth).toMatchObject({
+      writable: false,
+      degraded: true,
+      lastError: "write failed"
+    });
+    expect(useQuestownStore.getState().recordsByDate[useQuestownStore.getState().currentDateKey]?.quests).toHaveLength(1);
+  });
+
+  it("normalizes malformed persisted state and preserves app startup", async () => {
+    vi.resetModules();
+
+    const persistedState = JSON.stringify({
+      state: {
+        currentTab: "broken-tab",
+        currentDateKey: "broken-date",
+        selectedMonth: "2099-13",
+        dailyGoal: "bad",
+        weeklyMainTarget: "bad",
+        recordsByDate: {
+          broken: {
+            quests: [
+              {
+                id: "broken",
+                title: "복구 대상",
+                type: "main",
+                completed: true,
+                createdAt: "2026-03-25T00:00:00.000Z"
+              }
+            ]
+          }
+        }
+      },
+      version: 6
+    });
+
+    const brokenStorage = createLocalStorageMock();
+    brokenStorage.getItem.mockReturnValue(persistedState);
+
+    vi.stubGlobal("localStorage", brokenStorage);
+    ({ useQuestownStore } = await import("./questown-store"));
+
+    await useQuestownStore.persist.rehydrate();
+
+    const state = useQuestownStore.getState();
+    expect(state.currentTab).toBe("today");
+    expect(state.currentDateKey).toBeTruthy();
+    expect(state.selectedMonth).toBe(state.currentDateKey.slice(0, 7));
+    expect(state.recoveryNotice).toBe("저장된 기록 일부를 자동 복구했어요.");
   });
 });

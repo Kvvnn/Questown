@@ -1,3 +1,5 @@
+const CURRENT_BACKUP_VERSION = 4;
+
 interface RawBackupState {
   currentDateKey: string;
   selectedMonth: string;
@@ -28,6 +30,10 @@ export const validateBackupImportSchema = (
 
   if (!Number.isInteger(value.version) || Number(value.version) < 1) {
     return { ok: false, reason: "백업 버전 정보가 올바르지 않아요." };
+  }
+
+  if (Number(value.version) > CURRENT_BACKUP_VERSION) {
+    return { ok: false, reason: "지원하지 않는 백업 버전이에요." };
   }
 
   if (!isNonEmptyString(value.exportedAt) || Number.isNaN(Date.parse(value.exportedAt))) {

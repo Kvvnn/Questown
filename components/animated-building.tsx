@@ -39,12 +39,26 @@ const burstParticles = [
   { x: 0, y: -42, delay: 0.12 }
 ];
 
+const getBurstParticleColor = (eventType: QuestAnimationEvent["type"] | undefined) => {
+  if (eventType === "main-quest-clear") return "bg-fuchsia-300";
+  if (eventType === "combo-up") return "bg-orange-300";
+  if (eventType === "goal-reached") return "bg-amber-300";
+  if (eventType === "roof-preview") return "bg-cyan-300";
+  return "bg-amber-300";
+};
+
 const getContainerAnimation = (eventType: QuestAnimationEvent["type"] | undefined, reducedMotion: boolean) => {
   if (reducedMotion || !eventType || eventType === "idle") return { y: 0, scale: 1, rotate: 0 };
 
   switch (eventType) {
     case "quest-complete":
       return { y: [0, -5, 0], scale: [1, 1.02, 1], rotate: [0, 0.3, 0] };
+    case "combo-up":
+      return { y: [0, -8, 0], scale: [1, 1.07, 1], rotate: [0, 0.9, -0.7, 0] };
+    case "main-quest-clear":
+      return { y: [0, -10, 0], scale: [1, 1.09, 1.02, 1], rotate: [0, -0.8, 0.4, 0] };
+    case "roof-preview":
+      return { y: [0, -4, 0], scale: [1, 1.03, 1], rotate: 0 };
     case "goal-reached":
       return { y: [0, -8, 0], scale: [1, 1.06, 1], rotate: [0, -0.4, 0.2, 0] };
     case "streak-up":
@@ -57,6 +71,9 @@ const getContainerAnimation = (eventType: QuestAnimationEvent["type"] | undefine
 };
 
 const getGlowClass = (eventType: QuestAnimationEvent["type"] | undefined) => {
+  if (eventType === "main-quest-clear") return "from-fuchsia-200/75 to-indigo-200/45";
+  if (eventType === "combo-up") return "from-orange-200/70 to-rose-200/45";
+  if (eventType === "roof-preview") return "from-cyan-200/75 to-sky-200/40";
   if (eventType === "goal-reached") return "from-amber-200/70 to-fuchsia-200/40";
   if (eventType === "streak-up") return "from-orange-200/70 to-indigo-200/40";
   if (eventType === "quest-complete") return "from-sky-200/70 to-emerald-200/40";
@@ -134,7 +151,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
       !reducedMotion &&
       eventType !== "idle" &&
       eventType !== undefined &&
-      (eventType === "goal-reached" || eventType === "day-finalized" || eventType === "streak-up");
+      ["combo-up", "main-quest-clear", "goal-reached", "day-finalized", "streak-up", "roof-preview"].includes(eventType);
 
     const floorTypes = getVisibleCompletedFloorTypes(height, completedQuestTypes, maxVisibleFloors ?? 6);
     const floorWidth = compact ? 72 : 92;
@@ -157,6 +174,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
       (roofPalette ? roofSideHeight + 14 : 0) +
       (compact ? 26 : 34);
     const roofLabelClass = compact ? "px-2 py-0.5 text-[10px]" : "px-2 py-1 text-xs";
+    const previewRoofPalette = !finalized && eventType === "roof-preview" && roofType !== "none" ? getRoofPalette(roofType) : null;
 
     return (
       <motion.div
@@ -181,7 +199,7 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
               {burstParticles.map((particle, idx) => (
                 <motion.span
                   key={`${animationEvent?.token}-${idx}`}
-                  className="absolute block h-2 w-2 rounded-full bg-amber-300"
+                  className={`absolute block h-2 w-2 rounded-full ${getBurstParticleColor(eventType)}`}
                   initial={{ x: 0, y: 0, scale: 0.7, opacity: 0.95 }}
                   animate={{
                     x: particle.x,
@@ -226,12 +244,21 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
             {floorTypes.map((floorType, index) => {
               const palette = getIsometricPalette(floorType);
               const bottom = stackBottom + index * floorSideHeight;
+              const isTopFloor = index === floorTypes.length - 1;
+              const topFloorMotion =
+                !reducedMotion && isTopFloor && eventType === "quest-complete"
+                  ? { y: [0, -7, 0], scale: [1, 1.08, 1] }
+                  : !reducedMotion && isTopFloor && eventType === "combo-up"
+                    ? { y: [0, -8, 0], scale: [1, 1.1, 1] }
+                    : !reducedMotion && isTopFloor && eventType === "main-quest-clear"
+                      ? { y: [0, -10, 0], scale: [1, 1.14, 1] }
+                      : { y: 0, scale: 1 };
 
               return (
                 <motion.div
                   key={`floor-${index}`}
                   initial={reducedMotion ? false : { y: 16, opacity: 0, scale: 0.92 }}
-                  animate={{ y: 0, opacity: 1, scale: 1 }}
+                  animate={{ opacity: 1, ...topFloorMotion }}
                   exit={{ opacity: 0, y: 10 }}
                   transition={{
                     type: "spring",
@@ -281,6 +308,36 @@ export const CssFramerBuildingRenderer: AnimatedBuildingRenderer = {
                     left: roofPalette.left,
                     right: roofPalette.right,
                     stroke: "rgba(255,255,255,0.88)"
+                  }}
+                />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {previewRoofPalette ? (
+              <motion.div
+                key={`preview-roof-${roofType}-${animationEvent?.token ?? 0}`}
+                initial={reducedMotion ? { opacity: 0 } : { y: 14, opacity: 0, scale: 0.9 }}
+                animate={reducedMotion ? { opacity: [0, 0.9, 0] } : { y: [8, 0, -2], opacity: [0, 0.92, 0], scale: [0.92, 1.03, 1] }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: reducedMotion ? 0.45 : 0.82, ease: "easeOut" }}
+                className="pointer-events-none absolute left-1/2"
+                style={{
+                  width: roofWidth,
+                  marginLeft: -roofWidth / 2,
+                  bottom: stackBottom + visibleFloors * floorSideHeight + 6
+                }}
+              >
+                <PrismSvg
+                  width={roofWidth}
+                  depth={roofDepth}
+                  sideHeight={roofSideHeight}
+                  palette={{
+                    top: hexToRgba(previewRoofPalette.top, 0.72),
+                    left: hexToRgba(previewRoofPalette.left, 0.62),
+                    right: hexToRgba(previewRoofPalette.right, 0.62),
+                    stroke: "rgba(255,255,255,0.72)"
                   }}
                 />
               </motion.div>

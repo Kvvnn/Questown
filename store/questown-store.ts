@@ -2,45 +2,54 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { getBuildingHeight, getCompletionRate, getRoofType } from "@/domain/building";
-import {
-  addDays,
-  addMonths,
-  dateKeyToDate,
-  ensureDailyRecord,
-  isDateKey,
-  isMonthKey,
-  toDateKey,
-  toMonthKey
-} from "@/domain/date";
-import {
-  getBlockedDependencyIds,
-  getCompletedDependentIds,
-  normalizeQuestPriority,
-  wouldCreateDependencyCycle
-} from "@/domain/execution";
+import { addDays, addMonths, dateKeyToDate, ensureDailyRecord, isDateKey, isMonthKey, toDateKey, toMonthKey } from "@/domain/date";
 import { createQuestownId } from "@/domain/id";
-import { getQuestCounts, getQuestTitleKey } from "@/domain/quest";
 import {
-  createNextDayQuestCopies,
-  mergeGeneratedQuests,
-  normalizeRecurrencePattern
-} from "@/domain/recurrence";
+  addQuestToRecord,
+  assertRecordConsistency,
+  clearFocusQuestInRecord,
+  deleteQuestFromRecord,
+  finalizeRecord,
+  recalcRecord,
+  setFocusQuestInRecord,
+  toggleQuestInRecord,
+  unfinalizeRecord,
+  updateQuestMetaInRecord
+} from "@/domain/record-ops";
+import { prepareNextDayRecord, syncStateToToday } from "@/domain/rollover";
+import {
+  getMonthKeyFromDateKey,
+  getPreferredTownSelection,
+  getRecordForDate,
+  getTodayBuildingHeight,
+  getTodayRecord
+} from "@/domain/selectors";
+import { normalizeRecurrencePattern } from "@/domain/recurrence";
 import {
   AppBackupData,
+  BackupImportPreview,
   DailyRecord,
   QuestItem,
   QuestPriority,
   QuestType,
   RecurrencePattern,
+  StorageHealth,
   TabType
 } from "@/domain/types";
 import { validateBackupImportSchema } from "@/store/backup-schema";
 import { createSafeBrowserStorage } from "@/store/browser-storage";
 import { normalizeImportedRecordState } from "@/store/record-normalization";
-import { getMonthKeyFromDateKey, resolveSelectedTownDate, resolveTownMonth } from "./town-selection";
 
-const MAX_QUEST_TITLE_LENGTH = 80;
+const isDevEnvironment = process.env.NODE_ENV !== "production";
+const STORAGE_NAME = "questown-mvp-storage";
+const STORAGE_VERSION = 6;
+const HYDRATION_RECOVERY_NOTICE = "저장된 앱 데이터를 읽는 중 문제가 있어 안전한 상태로 복구했어요.";
+const NORMALIZATION_RECOVERY_NOTICE = "저장된 기록 일부를 자동 복구했어요.";
+const IMPORT_RECOVERY_NOTICE = "가져온 기록 일부를 자동 복구했어요.";
+const STORAGE_DEGRADED_NOTICE = "브라우저 저장소 접근에 문제가 있어 일부 변경이 저장되지 않을 수 있어요.";
+const browserStorage = createSafeBrowserStorage();
+let hydrationRecoverySetter: ((patch: Partial<QuestownDataState>) => void) | undefined;
+let storageHealthSetter: ((health: StorageHealth) => void) | undefined;
 
 interface LegacyQuestLike {
   id?: string;
@@ -88,7 +97,7 @@ interface UpdateQuestMetaInput {
   focusPinned?: boolean;
 }
 
-interface QuestownState {
+type QuestownDataState = {
   currentTab: TabType;
   currentDateKey: string;
   selectedMonth: string;
@@ -96,12 +105,21 @@ interface QuestownState {
   weeklyMainTarget: number;
   recordsByDate: Record<string, DailyRecord>;
   selectedDateInTown?: string;
+  recoveryNotice?: string;
+  storageNotice?: string;
+  storageHealth: StorageHealth;
+};
 
+interface QuestownState extends QuestownDataState {
   setTab: (tab: TabType) => void;
+  clearRecoveryNotice: () => void;
+  clearStorageNotice: () => void;
   setDailyGoal: (goal: number) => void;
   setWeeklyMainTarget: (target: number) => void;
   addQuest: (input: AddQuestInput) => { ok: boolean; reason?: string };
   updateQuestMeta: (questId: string, patch: UpdateQuestMetaInput) => { ok: boolean; reason?: string };
+  setFocusQuest: (questId: string) => { ok: boolean; reason?: string };
+  clearFocusQuest: () => { ok: boolean; reason?: string };
   toggleQuest: (questId: string) => { ok: boolean; reason?: string };
   deleteQuest: (questId: string) => { ok: boolean; reason?: string };
   finalizeCurrentDay: () => void;
@@ -112,8 +130,23 @@ interface QuestownState {
   hydrateToday: () => void;
   rolloverToToday: () => void;
   exportBackup: () => AppBackupData;
+  previewBackupImport: (data: unknown) => { ok: true; preview: BackupImportPreview } | { ok: false; reason: string };
+  applyBackupImport: (preview: BackupImportPreview) => { ok: boolean; reason?: string };
   importBackup: (data: unknown) => { ok: boolean; reason?: string };
 }
+
+const createInitialDataState = (): QuestownDataState => ({
+  currentTab: "today",
+  currentDateKey: toDateKey(),
+  selectedMonth: toMonthKey(),
+  dailyGoal: 3,
+  weeklyMainTarget: 10,
+  recordsByDate: {},
+  selectedDateInTown: undefined,
+  recoveryNotice: undefined,
+  storageNotice: browserStorage.getHealth().degraded ? STORAGE_DEGRADED_NOTICE : undefined,
+  storageHealth: browserStorage.getHealth()
+});
 
 const isQuestType = (value: unknown): value is QuestType => value === "daily" || value === "main" || value === "sub";
 const isTabType = (value: unknown): value is TabType => value === "today" || value === "town" || value === "manage";
@@ -198,70 +231,36 @@ const normalizeDependencyIds = (ids: unknown, selfId?: string) => {
 
 const sanitizeDependencyIds = (ids: unknown, availableQuestIds: Set<string>, selfId?: string) => {
   const cleaned = normalizeDependencyIds(ids, selfId)?.filter((value) => availableQuestIds.has(value));
-
   return cleaned && cleaned.length > 0 ? cleaned : undefined;
 };
 
-const formatQuestPreview = (questIds: string[], questMap: Map<string, QuestItem>) => {
-  const titles = questIds
-    .map((questId) => questMap.get(questId)?.title ?? questId)
-    .filter((title) => title.trim().length > 0);
-  const preview = titles.slice(0, 2).join(", ");
-  const suffix = titles.length > 2 ? ` 외 ${titles.length - 2}개` : "";
+const getRecoveryNotice = (preferred: string | undefined, fallback: string) => preferred ?? fallback;
 
-  return `${preview}${suffix}`;
-};
+const repairRecordConsistency = (
+  record: DailyRecord,
+  fallbackNotice: string
+): { record: DailyRecord; recoveryNotice?: string } => {
+  try {
+    assertRecordConsistency(record);
+    return { record };
+  } catch (error) {
+    if (isDevEnvironment) throw error;
 
-const validateDependencySelection = ({
-  ids,
-  availableQuestIds,
-  selfId,
-  questMap
-}: {
-  ids: unknown;
-  availableQuestIds: Set<string>;
-  selfId?: string;
-  questMap?: Map<string, QuestItem>;
-}): { ok: true; dependencyQuestIds?: string[] } | { ok: false; reason: string } => {
-  const cleaned = normalizeDependencyIds(ids, selfId);
-  if (!cleaned || cleaned.length === 0) {
-    return { ok: true, dependencyQuestIds: undefined };
-  }
-
-  const missingQuestIds = cleaned.filter((value) => !availableQuestIds.has(value));
-  if (missingQuestIds.length > 0) {
-    return { ok: false, reason: "선행 퀘스트를 찾을 수 없어요." };
-  }
-
-  if (selfId && questMap) {
-    const cyclicQuestIds = cleaned.filter((dependencyId) => wouldCreateDependencyCycle(selfId, dependencyId, questMap));
-    if (cyclicQuestIds.length > 0) {
+    const repairedRecord = recalcRecord(record, record.isFinalized);
+    try {
+      assertRecordConsistency(repairedRecord);
       return {
-        ok: false,
-        reason: `순환 선행 관계는 만들 수 없어요: ${formatQuestPreview(cyclicQuestIds, questMap)}`
+        record: repairedRecord,
+        recoveryNotice: fallbackNotice
+      };
+    } catch {
+      const resetRecord = ensureDailyRecord(record.date);
+      return {
+        record: resetRecord,
+        recoveryNotice: HYDRATION_RECOVERY_NOTICE
       };
     }
   }
-
-  return { ok: true, dependencyQuestIds: cleaned };
-};
-
-const recalc = (record: DailyRecord, finalized = record.isFinalized): DailyRecord => {
-  const completedCount = record.quests.filter((quest) => quest.completed).length;
-  const totalCount = record.quests.length;
-  const completionRate = getCompletionRate(completedCount, totalCount);
-  const counts = getQuestCounts(record.quests);
-
-  return {
-    ...record,
-    completedCount,
-    totalCount,
-    completionRate,
-    roofType: finalized ? getRoofType(completionRate) : "none",
-    isFinalized: finalized,
-    completedByType: counts.completedByType,
-    totalByType: counts.totalByType
-  };
 };
 
 const normalizeQuest = (
@@ -299,14 +298,14 @@ const normalizeQuest = (
       ? normalizeRecurringKey(legacyQuest.recurrenceKey, id, usedRecurringKeys)
       : normalizeNonEmptyString(legacyQuest.recurrenceKey) ?? id;
 
-  const quest: QuestItem = {
+  return {
     id,
     title,
     type,
     completed,
     createdAt,
     completedAt,
-    priority: normalizeQuestPriority(legacyQuest.priority as QuestPriority | undefined, type),
+    priority: legacyQuest.priority === "p1" || legacyQuest.priority === "p2" || legacyQuest.priority === "p3" ? legacyQuest.priority : undefined,
     focusPinned: normalizeBoolean(legacyQuest.focusPinned),
     dependencyQuestIds: availableQuestIds
       ? sanitizeDependencyIds(legacyQuest.dependencyQuestIds, availableQuestIds, id)
@@ -323,13 +322,11 @@ const normalizeQuest = (
     carryOverCount: carryOverEnabled ? normalizePositiveInt(legacyQuest.carryOverCount, 0, 0, 365) : undefined,
     carryOverSourceQuestId: carryOverEnabled ? normalizeNonEmptyString(legacyQuest.carryOverSourceQuestId) : undefined
   };
-
-  return quest;
 };
 
-const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord => {
+const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): { record: DailyRecord; recovered: boolean } => {
   const base = ensureDailyRecord(dateKey);
-  if (!raw) return base;
+  if (!raw) return { record: base, recovered: false };
 
   const source = Array.isArray(raw.quests) ? raw.quests : Array.isArray(raw.todos) ? raw.todos : [];
   const usedQuestIds = new Set<string>();
@@ -340,7 +337,7 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
     .filter((quest): quest is QuestItem => Boolean(quest));
 
   const ids = new Set(initial.map((quest) => quest.id));
-  const normalizedRecordState = normalizeImportedRecordState(
+  const normalizedState = normalizeImportedRecordState(
     dateKey,
     initial.map((quest) => ({
       ...quest,
@@ -348,534 +345,472 @@ const normalizeRecord = (dateKey: string, raw?: LegacyRecordLike): DailyRecord =
     }))
   );
 
-  return recalc(
+  const nextRecord = recalcRecord(
     {
       ...base,
-      ...normalizedRecordState,
+      ...normalizedState,
       isFinalized: normalizeBoolean(raw.isFinalized)
     },
     normalizeBoolean(raw.isFinalized)
   );
-};
 
-const normalizeRecordsByDate = (recordsByDate?: Record<string, LegacyRecordLike>) =>
-  Object.entries(recordsByDate ?? {}).reduce<Record<string, DailyRecord>>((acc, [key, value]) => {
-    if (!isDateKey(key)) return acc;
-    acc[key] = normalizeRecord(key, value);
-    return acc;
-  }, {});
-
-const getRecord = (recordsByDate: Record<string, DailyRecord>, dateKey: string) =>
-  recordsByDate[dateKey] ?? ensureDailyRecord(dateKey);
-
-const prepareNextDayRecord = (fromRecord: DailyRecord, targetRecord: DailyRecord, targetDateKey: string) => {
-  const generated = fromRecord.quests.flatMap((quest) => createNextDayQuestCopies(quest, targetDateKey));
-
-  const mergedQuests = mergeGeneratedQuests(targetRecord.quests, generated);
-
-  return recalc(
-    {
-      ...targetRecord,
-      date: targetDateKey,
-      quests: mergedQuests,
-      isFinalized: false,
-      roofType: "none"
-    },
-    false
-  );
-};
-
-const rollForwardRecords = (
-  recordsByDate: Record<string, DailyRecord>,
-  fromDateKey: string,
-  toDateKey: string
-): Record<string, DailyRecord> => {
-  const records = { ...recordsByDate };
-
-  if (fromDateKey >= toDateKey) {
-    if (!records[toDateKey]) records[toDateKey] = ensureDailyRecord(toDateKey);
-    return records;
-  }
-
-  let cursorKey = fromDateKey;
-  let cursorRecord = recalc(getRecord(records, cursorKey), true);
-  records[cursorKey] = cursorRecord;
-
-  while (cursorKey < toDateKey) {
-    const nextKey = addDays(cursorKey, 1);
-    const nextBase = getRecord(records, nextKey);
-    const nextPrepared = prepareNextDayRecord(cursorRecord, nextBase, nextKey);
-    const shouldFinalize = nextKey !== toDateKey;
-    const nextRecord = shouldFinalize ? recalc(nextPrepared, true) : nextPrepared;
-
-    records[nextKey] = nextRecord;
-    cursorKey = nextKey;
-    cursorRecord = nextRecord;
-  }
-
-  return records;
-};
-
-const syncStateToToday = (recordsByDate: Record<string, DailyRecord>, candidateDateKey: string) => {
-  const todayKey = toDateKey();
-
-  if (candidateDateKey < todayKey) {
-    return {
-      currentDateKey: todayKey,
-      recordsByDate: rollForwardRecords(recordsByDate, candidateDateKey, todayKey)
-    };
-  }
-
-  const todayRecord = getRecord(recordsByDate, todayKey);
+  const repaired = repairRecordConsistency(nextRecord, NORMALIZATION_RECOVERY_NOTICE);
 
   return {
-    currentDateKey: todayKey,
-    recordsByDate: {
-      ...recordsByDate,
-      [todayKey]: recalc(todayRecord, todayRecord.isFinalized)
+    record: repaired.record,
+    recovered: Boolean(repaired.recoveryNotice)
+  };
+};
+
+const normalizeRecordsByDate = (recordsByDate?: Record<string, LegacyRecordLike>) => {
+  const normalized: Record<string, DailyRecord> = {};
+  let invalidDateKeyCount = 0;
+  let recovered = false;
+
+  Object.entries(recordsByDate ?? {}).forEach(([key, value]) => {
+    if (!isDateKey(key)) {
+      invalidDateKeyCount += 1;
+      return;
+    }
+
+    const normalizedRecord = normalizeRecord(key, value);
+    normalized[key] = normalizedRecord.record;
+    if (normalizedRecord.recovered) recovered = true;
+  });
+
+  return {
+    recordsByDate: normalized,
+    invalidDateKeyCount,
+    recovered
+  };
+};
+
+const sameStorageHealth = (left: StorageHealth, right: StorageHealth) =>
+  left.readable === right.readable &&
+  left.writable === right.writable &&
+  left.degraded === right.degraded &&
+  left.lastError === right.lastError;
+
+const buildBackupImportPreview = (
+  currentState: QuestownDataState,
+  data: unknown
+): { ok: true; preview: BackupImportPreview } | { ok: false; reason: string } => {
+  const validation = validateBackupImportSchema(data);
+  if (!validation.ok) {
+    return validation;
+  }
+
+  const { version, exportedAt, state } = validation.data;
+  const rawRecords = state.recordsByDate as Record<string, LegacyRecordLike>;
+  const nextDate = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
+  const normalizedRecords = normalizeRecordsByDate(rawRecords);
+
+  if (Object.keys(rawRecords).length > 0 && Object.keys(normalizedRecords.recordsByDate).length === 0) {
+    return { ok: false, reason: "백업 데이터의 날짜 기록 형식이 올바르지 않아요." };
+  }
+
+  const synced = syncStateToToday(normalizedRecords.recordsByDate, nextDate);
+  const preferredTown = getPreferredTownSelection(state.selectedMonth, synced.currentDateKey, undefined, synced.recordsByDate);
+  const incomingDates = Object.keys(synced.recordsByDate).sort();
+  const overwriteDateCount = incomingDates.filter((dateKey) => Boolean(currentState.recordsByDate[dateKey])).length;
+  const newDateCount = incomingDates.length - overwriteDateCount;
+  const hasRepairWarning =
+    normalizedRecords.recovered ||
+    normalizedRecords.invalidDateKeyCount > 0 ||
+    !isDateKey(state.currentDateKey) ||
+    !isMonthKey(state.selectedMonth);
+
+  return {
+    ok: true,
+    preview: {
+      version,
+      exportedAt,
+      dateCount: incomingDates.length,
+      earliestDate: incomingDates[0],
+      latestDate: incomingDates[incomingDates.length - 1],
+      overwriteDateCount,
+      newDateCount,
+      hasRepairWarning,
+      repairSummary: hasRepairWarning ? IMPORT_RECOVERY_NOTICE : undefined,
+      state: {
+        currentDateKey: synced.currentDateKey,
+        selectedMonth: preferredTown.monthKey,
+        dailyGoal: normalizePositiveInt(state.dailyGoal, 3, 1, 10),
+        weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
+        recordsByDate: synced.recordsByDate,
+        selectedDateInTown: preferredTown.dateKey,
+        recoveryNotice: hasRepairWarning ? IMPORT_RECOVERY_NOTICE : undefined
+      }
     }
   };
 };
 
+const normalizeHydratedState = (persistedState: unknown): QuestownDataState => {
+  const fallback = createInitialDataState();
+  if (!isRecordObject(persistedState)) {
+    return {
+      ...fallback,
+      recoveryNotice: HYDRATION_RECOVERY_NOTICE
+    };
+  }
+
+  let recovered = Boolean(normalizeNonEmptyString(persistedState.recoveryNotice));
+  const currentDateKey = isDateKey(persistedState.currentDateKey) ? persistedState.currentDateKey : fallback.currentDateKey;
+  if (persistedState.currentDateKey !== undefined && persistedState.currentDateKey !== currentDateKey) recovered = true;
+
+  const rawRecordsByDate = isRecordObject(persistedState.recordsByDate)
+    ? (persistedState.recordsByDate as Record<string, LegacyRecordLike>)
+    : {};
+  if (persistedState.recordsByDate !== undefined && !isRecordObject(persistedState.recordsByDate)) recovered = true;
+
+  const normalizedRecords = normalizeRecordsByDate(rawRecordsByDate);
+  if (normalizedRecords.invalidDateKeyCount > 0 || normalizedRecords.recovered) recovered = true;
+
+  const currentTab = normalizeTabType(persistedState.currentTab);
+  if (persistedState.currentTab !== undefined && persistedState.currentTab !== currentTab) recovered = true;
+
+  const dailyGoal = normalizePositiveInt(persistedState.dailyGoal, fallback.dailyGoal, 1, 10);
+  if (persistedState.dailyGoal !== undefined && Number(persistedState.dailyGoal) !== dailyGoal) recovered = true;
+
+  const weeklyMainTarget = normalizePositiveInt(persistedState.weeklyMainTarget, fallback.weeklyMainTarget, 1, 50);
+  if (persistedState.weeklyMainTarget !== undefined && Number(persistedState.weeklyMainTarget) !== weeklyMainTarget) recovered = true;
+
+  const preferredTown = getPreferredTownSelection(
+    typeof persistedState.selectedMonth === "string" ? persistedState.selectedMonth : undefined,
+    currentDateKey,
+    isDateKey(persistedState.selectedDateInTown) ? persistedState.selectedDateInTown : undefined,
+    normalizedRecords.recordsByDate
+  );
+
+  if (
+    persistedState.selectedMonth !== undefined &&
+    typeof persistedState.selectedMonth === "string" &&
+    persistedState.selectedMonth !== preferredTown.monthKey
+  ) {
+    recovered = true;
+  }
+
+  if (
+    persistedState.selectedDateInTown !== undefined &&
+    (!isDateKey(persistedState.selectedDateInTown) || persistedState.selectedDateInTown !== preferredTown.dateKey)
+  ) {
+    recovered = true;
+  }
+
+  return {
+    currentTab,
+    currentDateKey,
+    selectedMonth: preferredTown.monthKey,
+    dailyGoal,
+    weeklyMainTarget,
+    recordsByDate: normalizedRecords.recordsByDate,
+    selectedDateInTown: preferredTown.dateKey,
+    recoveryNotice: recovered ? getRecoveryNotice(normalizeNonEmptyString(persistedState.recoveryNotice), NORMALIZATION_RECOVERY_NOTICE) : undefined,
+    storageNotice: fallback.storageNotice,
+    storageHealth: fallback.storageHealth
+  };
+};
+
+const createPersistedSlice = (state: QuestownState) => ({
+  currentTab: state.currentTab,
+  currentDateKey: state.currentDateKey,
+  selectedMonth: state.selectedMonth,
+  dailyGoal: state.dailyGoal,
+  weeklyMainTarget: state.weeklyMainTarget,
+  recordsByDate: state.recordsByDate,
+  selectedDateInTown: state.selectedDateInTown
+});
+
 export const useQuestownStore = create<QuestownState>()(
   persist(
-    (set, get) => ({
-      currentTab: "today",
-      currentDateKey: toDateKey(),
-      selectedMonth: toMonthKey(),
-      dailyGoal: 3,
-      weeklyMainTarget: 10,
-      recordsByDate: {},
+    (set, get) => {
+      hydrationRecoverySetter = (patch) => {
+        set(patch as Partial<QuestownState>);
+      };
+      storageHealthSetter = (nextHealth) => {
+        set((state) => {
+          const nextNotice = nextHealth.degraded ? state.storageNotice ?? STORAGE_DEGRADED_NOTICE : state.storageNotice;
+          if (sameStorageHealth(state.storageHealth, nextHealth) && state.storageNotice === nextNotice) {
+            return state;
+          }
 
-      setTab: (tab) => set({ currentTab: tab }),
-
-      setDailyGoal: (goal) => {
-        const nextGoal = normalizePositiveInt(goal, 3, 1, 10);
-        set({ dailyGoal: nextGoal });
-      },
-
-      setWeeklyMainTarget: (target) => {
-        const nextTarget = normalizePositiveInt(target, 10, 1, 50);
-        set({ weeklyMainTarget: nextTarget });
-      },
-
-      addQuest: ({
-        title,
-        type,
-        priority,
-        dependencyQuestIds,
-        recurrencePattern = "none",
-        recurrenceIntervalDays,
-        carryOverEnabled = false,
-        carryOverLimit
-      }) => {
-        const trimmed = title.trim();
-        if (!trimmed) return { ok: false, reason: "퀘스트를 입력해 주세요." };
-        if (!isQuestType(type)) return { ok: false, reason: "올바른 퀘스트 타입이 아니에요." };
-        if (trimmed.length > MAX_QUEST_TITLE_LENGTH) {
-          return { ok: false, reason: `퀘스트는 ${MAX_QUEST_TITLE_LENGTH}자 이하로 입력해 주세요.` };
-        }
-
-        const pattern = normalizeRecurrencePattern(recurrencePattern, false);
-        const isRecurring = pattern !== "none";
-        const intervalDays = pattern === "interval" ? normalizePositiveInt(recurrenceIntervalDays, 2, 1, 30) : undefined;
-        const carryLimit = carryOverEnabled ? normalizePositiveInt(carryOverLimit, 3, 1, 30) : undefined;
-
-        const dateKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, dateKey);
-        if (today.isFinalized) return { ok: false, reason: "이미 마감된 날짜는 수정할 수 없어요." };
-
-        const nextTitleKey = getQuestTitleKey({ title: trimmed, type });
-        if (today.quests.some((quest) => getQuestTitleKey(quest) === nextTitleKey)) {
-          return { ok: false, reason: "같은 타입에 동일한 퀘스트가 이미 있어요." };
-        }
-
-        const availableIds = new Set(today.quests.map((quest) => quest.id));
-        const dependencyValidation = validateDependencySelection({
-          ids: dependencyQuestIds,
-          availableQuestIds: availableIds
+          return {
+            storageHealth: nextHealth,
+            storageNotice: nextNotice
+          };
         });
-        if (!dependencyValidation.ok) return dependencyValidation;
+      };
+      browserStorage.subscribe((health) => {
+        storageHealthSetter?.(health);
+      });
 
-        const next = recalc(
-          {
-            ...today,
-            quests: [
-              ...today.quests,
-              {
-                id: createQuestownId(),
-                title: trimmed,
-                type,
-                completed: false,
-                createdAt: new Date().toISOString(),
-                priority: normalizeQuestPriority(priority, type),
-                dependencyQuestIds: dependencyValidation.dependencyQuestIds,
-                focusPinned: false,
-                isRecurring,
-                recurrencePattern: pattern,
-                recurrenceKey: isRecurring ? createQuestownId() : undefined,
-                recurrenceAnchorDate: isRecurring ? dateKey : undefined,
-                recurrenceIntervalDays: intervalDays,
-                carryOverEnabled,
-                carryOverLimit: carryLimit,
-                carryOverCount: carryOverEnabled ? 0 : undefined
-              }
-            ],
-            isFinalized: false,
-            roofType: "none"
-          },
-          false
+      const normalizeRecordsMap = (recordsByDate: Record<string, DailyRecord>) => {
+        let recoveryNotice: string | undefined;
+        const nextRecordsByDate = Object.fromEntries(
+          Object.entries(recordsByDate).map(([dateKey, record]) => {
+            const repaired = repairRecordConsistency(record, NORMALIZATION_RECOVERY_NOTICE);
+            recoveryNotice ??= repaired.recoveryNotice;
+            return [dateKey, repaired.record];
+          })
         );
 
+        return { recordsByDate: nextRecordsByDate, recoveryNotice };
+      };
+
+      const applyRecoveryAwarePatch = (patch: Partial<QuestownDataState>) => {
+        const normalizedRecords = patch.recordsByDate ? normalizeRecordsMap(patch.recordsByDate) : undefined;
         set((state) => ({
-          recordsByDate: {
-            ...state.recordsByDate,
-            [dateKey]: next
-          }
+          ...patch,
+          recordsByDate: normalizedRecords?.recordsByDate ?? patch.recordsByDate ?? state.recordsByDate,
+          recoveryNotice: patch.recoveryNotice ?? normalizedRecords?.recoveryNotice ?? state.recoveryNotice
         }));
+      };
 
-        return { ok: true };
-      },
+      const applyRecordMutation = (
+        dateKey: string,
+        mutator: (record: DailyRecord) => { ok: true; record: DailyRecord } | { ok: false; reason: string },
+        recoveryNotice = NORMALIZATION_RECOVERY_NOTICE
+      ) => {
+        const result = mutator(getRecordForDate(get().recordsByDate, dateKey));
+        if (!result.ok) return result;
 
-      updateQuestMeta: (questId, patch) => {
-        const dateKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, dateKey);
-        if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 수정할 수 없어요." };
-
-        const target = today.quests.find((quest) => quest.id === questId);
-        if (!target) return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
-
-        const questMap = new Map(today.quests.map((quest) => [quest.id, quest] as const));
-        const hasDependencyPatch = Object.prototype.hasOwnProperty.call(patch, "dependencyQuestIds");
-        const dependencyValidation = hasDependencyPatch
-          ? validateDependencySelection({
-              ids: patch.dependencyQuestIds,
-              availableQuestIds: new Set(questMap.keys()),
-              selfId: questId,
-              questMap
-            })
-          : { ok: true, dependencyQuestIds: undefined as string[] | undefined };
-        if (!dependencyValidation.ok) return dependencyValidation;
-
-        const next = recalc(
-          {
-            ...today,
-            quests: today.quests.map((quest) => {
-              if (quest.id !== questId) return quest;
-
-              return {
-                ...quest,
-                priority:
-                  patch.priority !== undefined
-                    ? normalizeQuestPriority(patch.priority, quest.type)
-                    : normalizeQuestPriority(quest.priority, quest.type),
-                focusPinned: patch.focusPinned ?? quest.focusPinned,
-                dependencyQuestIds: hasDependencyPatch ? dependencyValidation.dependencyQuestIds : quest.dependencyQuestIds
-              };
-            }),
-            isFinalized: false,
-            roofType: "none"
-          },
-          false
-        );
-
-        set((state) => ({
+        const repaired = repairRecordConsistency(result.record, recoveryNotice);
+        applyRecoveryAwarePatch({
           recordsByDate: {
-            ...state.recordsByDate,
-            [dateKey]: next
-          }
-        }));
-
-        return { ok: true };
-      },
-
-      toggleQuest: (questId) => {
-        const dateKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, dateKey);
-        if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 체크 변경이 불가해요." };
-
-        const questMap = new Map(today.quests.map((quest) => [quest.id, quest] as const));
-        const target = questMap.get(questId);
-        if (!target) return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
-
-        if (!target.completed) {
-          const blockedByIds = getBlockedDependencyIds(target, questMap);
-          if (blockedByIds.length > 0) {
-            const blocker = questMap.get(blockedByIds[0]);
-            return { ok: false, reason: `선행 Quest를 먼저 완료하세요: ${blocker?.title ?? blockedByIds[0]}` };
-          }
-        }
-
-        if (target.completed) {
-          const completedDependentIds = getCompletedDependentIds(questId, questMap);
-          if (completedDependentIds.length > 0) {
-            const titles = completedDependentIds
-              .map((id) => questMap.get(id)?.title)
-              .filter((title): title is string => Boolean(title));
-            const preview = titles.slice(0, 2).join(", ");
-            const suffix = titles.length > 2 ? ` 외 ${titles.length - 2}개` : "";
-            return { ok: false, reason: `후행 Quest를 먼저 되돌리세요: ${preview}${suffix}` };
-          }
-        }
-
-        const next = recalc(
-          {
-            ...today,
-            quests: today.quests.map((quest) =>
-              quest.id === questId
-                ? {
-                    ...quest,
-                    completed: !quest.completed,
-                    completedAt: !quest.completed ? new Date().toISOString() : undefined
-                  }
-                : quest
-            ),
-            isFinalized: false,
-            roofType: "none"
+            ...get().recordsByDate,
+            [dateKey]: repaired.record
           },
-          false
-        );
+          recoveryNotice: repaired.recoveryNotice
+        });
 
-        set((state) => ({
-          recordsByDate: {
-            ...state.recordsByDate,
-            [dateKey]: next
-          }
-        }));
+        return { ok: true } as const;
+      };
 
-        return { ok: true };
-      },
+      return {
+        ...createInitialDataState(),
 
-      deleteQuest: (questId) => {
-        const dateKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, dateKey);
-        if (today.isFinalized) return { ok: false, reason: "마감된 날짜는 삭제할 수 없어요." };
-        if (!today.quests.some((quest) => quest.id === questId)) {
-          return { ok: false, reason: "퀘스트를 찾을 수 없어요." };
-        }
+        setTab: (tab) => set({ currentTab: tab }),
 
-        const dependentTitles = today.quests
-          .filter((quest) => (quest.dependencyQuestIds ?? []).includes(questId))
-          .map((quest) => quest.title);
+        clearRecoveryNotice: () => set({ recoveryNotice: undefined }),
 
-        if (dependentTitles.length > 0) {
-          const preview = dependentTitles.slice(0, 2).join(", ");
-          const suffix = dependentTitles.length > 2 ? ` 외 ${dependentTitles.length - 2}개` : "";
-          return { ok: false, reason: `후행 Quest를 먼저 정리하세요: ${preview}${suffix}` };
-        }
+        clearStorageNotice: () => {
+          browserStorage.clearLastError();
+          set({ storageNotice: undefined, storageHealth: browserStorage.getHealth() });
+        },
 
-        const nextQuests = today.quests
-          .filter((quest) => quest.id !== questId)
-          .map((quest) => {
-            if (!quest.dependencyQuestIds?.includes(questId)) return quest;
-            const deps = quest.dependencyQuestIds.filter((id) => id !== questId);
-            return {
-              ...quest,
-              dependencyQuestIds: deps.length > 0 ? deps : undefined
-            };
-          });
+        setDailyGoal: (goal) => {
+          const nextGoal = normalizePositiveInt(goal, 3, 1, 10);
+          set({ dailyGoal: nextGoal });
+        },
 
-        const next = recalc(
-          {
-            ...today,
-            quests: nextQuests,
-            isFinalized: false,
-            roofType: "none"
-          },
-          false
-        );
+        setWeeklyMainTarget: (target) => {
+          const nextTarget = normalizePositiveInt(target, 10, 1, 50);
+          set({ weeklyMainTarget: nextTarget });
+        },
 
-        set((state) => ({
-          recordsByDate: {
-            ...state.recordsByDate,
-            [dateKey]: next
-          }
-        }));
+        addQuest: (input) =>
+          applyRecordMutation(get().currentDateKey, (record) => addQuestToRecord(record, input), NORMALIZATION_RECOVERY_NOTICE),
 
-        return { ok: true };
-      },
+        updateQuestMeta: (questId, patch) =>
+          applyRecordMutation(
+            get().currentDateKey,
+            (record) => updateQuestMetaInRecord(record, questId, patch),
+            NORMALIZATION_RECOVERY_NOTICE
+          ),
 
-      finalizeCurrentDay: () => {
-        const dateKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, dateKey);
-        const next = recalc(today, true);
-        set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
-      },
+        setFocusQuest: (questId) =>
+          applyRecordMutation(
+            get().currentDateKey,
+            (record) => setFocusQuestInRecord(record, questId),
+            NORMALIZATION_RECOVERY_NOTICE
+          ),
 
-      unfinalizeCurrentDay: () => {
-        const dateKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, dateKey);
-        const next = recalc({ ...today, isFinalized: false, roofType: "none" }, false);
-        set((state) => ({ recordsByDate: { ...state.recordsByDate, [dateKey]: next } }));
-      },
+        clearFocusQuest: () =>
+          applyRecordMutation(get().currentDateKey, (record) => clearFocusQuestInRecord(record), NORMALIZATION_RECOVERY_NOTICE),
 
-      goNextDayForDev: () => {
-        const todayKey = get().currentDateKey;
-        const today = getRecord(get().recordsByDate, todayKey);
-        const finalizedToday = recalc(today, true);
-        const nextKey = addDays(todayKey, 1);
-        const nextBase = getRecord(get().recordsByDate, nextKey);
-        const nextPrepared = prepareNextDayRecord(finalizedToday, nextBase, nextKey);
+        toggleQuest: (questId) =>
+          applyRecordMutation(
+            get().currentDateKey,
+            (record) => toggleQuestInRecord(record, questId),
+            NORMALIZATION_RECOVERY_NOTICE
+          ),
 
-        set((state) => ({
-          currentDateKey: nextKey,
-          selectedMonth: getMonthKeyFromDateKey(nextKey),
-          recordsByDate: {
-            ...state.recordsByDate,
-            [todayKey]: finalizedToday,
-            [nextKey]: nextPrepared
-          },
-          selectedDateInTown: resolveSelectedTownDate(
-            getMonthKeyFromDateKey(nextKey),
-            nextKey,
-            state.selectedDateInTown,
+        deleteQuest: (questId) =>
+          applyRecordMutation(
+            get().currentDateKey,
+            (record) => deleteQuestFromRecord(record, questId),
+            NORMALIZATION_RECOVERY_NOTICE
+          ),
+
+        finalizeCurrentDay: () => {
+          applyRecordMutation(get().currentDateKey, (record) => ({ ok: true, record: finalizeRecord(record) }), NORMALIZATION_RECOVERY_NOTICE);
+        },
+
+        unfinalizeCurrentDay: () => {
+          applyRecordMutation(
+            get().currentDateKey,
+            (record) => ({ ok: true, record: unfinalizeRecord(record) }),
+            NORMALIZATION_RECOVERY_NOTICE
+          );
+        },
+
+        goNextDayForDev: () => {
+          const todayKey = get().currentDateKey;
+          const today = getRecordForDate(get().recordsByDate, todayKey);
+          const finalizedTodayResult = repairRecordConsistency(finalizeRecord(today), NORMALIZATION_RECOVERY_NOTICE);
+          const targetDateKey = addDays(todayKey, 1);
+          const nextBase = getRecordForDate(get().recordsByDate, targetDateKey);
+          const nextPreparedResult = repairRecordConsistency(
+            prepareNextDayRecord(finalizedTodayResult.record, nextBase, targetDateKey),
+            NORMALIZATION_RECOVERY_NOTICE
+          );
+          const preferredTown = getPreferredTownSelection(
+            getMonthKeyFromDateKey(targetDateKey),
+            targetDateKey,
+            get().selectedDateInTown,
             {
-              ...state.recordsByDate,
-              [todayKey]: finalizedToday,
-              [nextKey]: nextPrepared
+              ...get().recordsByDate,
+              [todayKey]: finalizedTodayResult.record,
+              [targetDateKey]: nextPreparedResult.record
             }
-          )
-        }));
-      },
+          );
 
-      moveMonth: (delta) =>
-        set((state) => {
-          const nextMonth = resolveTownMonth(addMonths(state.selectedMonth, delta), state.currentDateKey);
-          return {
-            selectedMonth: nextMonth,
-            selectedDateInTown: resolveSelectedTownDate(
-              nextMonth,
-              state.currentDateKey,
-              state.selectedDateInTown,
-              state.recordsByDate
-            )
-          };
-        }),
-      selectDateInTown: (date) => set({ selectedDateInTown: date }),
+          applyRecoveryAwarePatch({
+            currentDateKey: targetDateKey,
+            selectedMonth: preferredTown.monthKey,
+            recordsByDate: {
+              ...get().recordsByDate,
+              [todayKey]: finalizedTodayResult.record,
+              [targetDateKey]: nextPreparedResult.record
+            },
+            selectedDateInTown: preferredTown.dateKey,
+            recoveryNotice: finalizedTodayResult.recoveryNotice ?? nextPreparedResult.recoveryNotice
+          });
+        },
 
-      hydrateToday: () => {
-        const fallbackDateKey = toDateKey();
-        const activeDateKey = isDateKey(get().currentDateKey) ? get().currentDateKey : fallbackDateKey;
-        const synced = syncStateToToday(get().recordsByDate, activeDateKey);
+        moveMonth: (delta) => {
+          const nextMonth = addMonths(get().selectedMonth, delta);
+          const preferredTown = getPreferredTownSelection(
+            nextMonth,
+            get().currentDateKey,
+            get().selectedDateInTown,
+            get().recordsByDate
+          );
 
-        set((state) => {
-          const selectedMonth = resolveTownMonth(state.selectedMonth, synced.currentDateKey);
+          set({
+            selectedMonth: preferredTown.monthKey,
+            selectedDateInTown: preferredTown.dateKey
+          });
+        },
 
-          return {
-            currentDateKey: synced.currentDateKey,
-            selectedMonth,
-            recordsByDate: synced.recordsByDate,
-            selectedDateInTown: resolveSelectedTownDate(
-              selectedMonth,
-              synced.currentDateKey,
-              state.selectedDateInTown,
-              synced.recordsByDate
-            )
-          };
-        });
-      },
+        selectDateInTown: (date) => set({ selectedDateInTown: date }),
 
-      rolloverToToday: () => {
-        const currentKey = get().currentDateKey;
-        const todayKey = toDateKey();
-
-        if (currentKey === todayKey) return;
-
-        const activeDateKey = isDateKey(currentKey) ? currentKey : todayKey;
-        const synced = syncStateToToday(get().recordsByDate, activeDateKey);
-        const selectedMonth = resolveTownMonth(get().selectedMonth, synced.currentDateKey);
-
-        set({
-          currentDateKey: synced.currentDateKey,
-          selectedMonth,
-          recordsByDate: synced.recordsByDate,
-          selectedDateInTown: resolveSelectedTownDate(
-            selectedMonth,
+        hydrateToday: () => {
+          const fallbackDateKey = toDateKey();
+          const activeDateKey = isDateKey(get().currentDateKey) ? get().currentDateKey : fallbackDateKey;
+          const synced = syncStateToToday(get().recordsByDate, activeDateKey);
+          const preferredTown = getPreferredTownSelection(
+            get().selectedMonth,
             synced.currentDateKey,
             get().selectedDateInTown,
             synced.recordsByDate
-          )
-        });
-      },
+          );
 
-      exportBackup: () => ({
-        version: 4,
-        exportedAt: new Date().toISOString(),
-        state: {
-          currentDateKey: get().currentDateKey,
-          selectedMonth: get().selectedMonth,
-          dailyGoal: get().dailyGoal,
-          weeklyMainTarget: get().weeklyMainTarget,
-          recordsByDate: get().recordsByDate
+          applyRecoveryAwarePatch({
+            currentDateKey: synced.currentDateKey,
+            selectedMonth: preferredTown.monthKey,
+            recordsByDate: synced.recordsByDate,
+            selectedDateInTown: preferredTown.dateKey
+          });
+        },
+
+        rolloverToToday: () => {
+          const currentKey = get().currentDateKey;
+          const todayKey = toDateKey();
+
+          if (currentKey === todayKey) return;
+
+          const activeDateKey = isDateKey(currentKey) ? currentKey : todayKey;
+          const synced = syncStateToToday(get().recordsByDate, activeDateKey);
+          const preferredTown = getPreferredTownSelection(
+            get().selectedMonth,
+            synced.currentDateKey,
+            get().selectedDateInTown,
+            synced.recordsByDate
+          );
+
+          applyRecoveryAwarePatch({
+            currentDateKey: synced.currentDateKey,
+            selectedMonth: preferredTown.monthKey,
+            recordsByDate: synced.recordsByDate,
+            selectedDateInTown: preferredTown.dateKey
+          });
+        },
+
+        exportBackup: () => ({
+          version: 4,
+          exportedAt: new Date().toISOString(),
+          state: {
+            currentDateKey: get().currentDateKey,
+            selectedMonth: get().selectedMonth,
+            dailyGoal: get().dailyGoal,
+            weeklyMainTarget: get().weeklyMainTarget,
+            recordsByDate: get().recordsByDate
+          }
+        }),
+
+        previewBackupImport: (data) => buildBackupImportPreview(get(), data),
+
+        applyBackupImport: (preview) => {
+          if (!preview || !preview.state) {
+            return { ok: false, reason: "복원 미리보기 정보가 올바르지 않아요." };
+          }
+
+          applyRecoveryAwarePatch({
+            currentDateKey: preview.state.currentDateKey,
+            selectedMonth: preview.state.selectedMonth,
+            dailyGoal: normalizePositiveInt(preview.state.dailyGoal, 3, 1, 10),
+            weeklyMainTarget: normalizePositiveInt(preview.state.weeklyMainTarget, 10, 1, 50),
+            recordsByDate: preview.state.recordsByDate,
+            selectedDateInTown: preview.state.selectedDateInTown,
+            recoveryNotice: preview.state.recoveryNotice
+          });
+
+          return { ok: true };
+        },
+
+        importBackup: (data) => {
+          const previewResult = buildBackupImportPreview(get(), data);
+          if (!previewResult.ok) return previewResult;
+          return get().applyBackupImport(previewResult.preview);
         }
-      }),
-
-      importBackup: (data) => {
-        const validation = validateBackupImportSchema(data);
-        if (!validation.ok) {
-          return validation;
-        }
-
-        const { state } = validation.data;
-        const rawRecords = state.recordsByDate;
-        const nextDate = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
-        const normalizedRecords = normalizeRecordsByDate(rawRecords as Record<string, LegacyRecordLike>);
-        if (Object.keys(rawRecords).length > 0 && Object.keys(normalizedRecords).length === 0) {
-          return { ok: false, reason: "백업 데이터의 날짜 기록 형식이 올바르지 않아요." };
-        }
-        const synced = syncStateToToday(normalizedRecords, nextDate);
-        const selectedMonth = resolveTownMonth(state.selectedMonth, synced.currentDateKey);
-
-        set({
-          currentDateKey: synced.currentDateKey,
-          selectedMonth,
-          dailyGoal: normalizePositiveInt(state.dailyGoal, 3, 1, 10),
-          weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
-          recordsByDate: synced.recordsByDate,
-          selectedDateInTown: resolveSelectedTownDate(selectedMonth, synced.currentDateKey, undefined, synced.recordsByDate)
-        });
-
-        return { ok: true };
-      }
-    }),
+      };
+    },
     {
-      name: "questown-mvp-storage",
-      version: 6,
-      storage: createJSONStorage(() => createSafeBrowserStorage()),
-      migrate: (persistedState: unknown) => {
-        const state = (persistedState ?? {}) as Partial<QuestownState> & {
-          recordsByDate?: Record<string, LegacyRecordLike>;
-          weeklyMainTarget?: number;
-        };
+      name: STORAGE_NAME,
+      version: STORAGE_VERSION,
+      storage: createJSONStorage(() => browserStorage),
+      partialize: (state) => createPersistedSlice(state),
+      migrate: (persistedState: unknown) => normalizeHydratedState(persistedState),
+      merge: (persistedState: unknown, currentState: QuestownState) => ({
+        ...currentState,
+        ...normalizeHydratedState(persistedState)
+      }),
+      onRehydrateStorage: () => (_state, error) => {
+        if (!error) return;
 
-        const currentDateKey = isDateKey(state.currentDateKey) ? state.currentDateKey : toDateKey();
-        const recordsByDate = normalizeRecordsByDate(state.recordsByDate);
-        const selectedMonth = isMonthKey(state.selectedMonth) ? state.selectedMonth : getMonthKeyFromDateKey(currentDateKey);
-        const selectedDateInTown = isDateKey(state.selectedDateInTown) ? state.selectedDateInTown : undefined;
-
-        return {
-          currentTab: normalizeTabType(state.currentTab),
-          currentDateKey,
-          selectedMonth,
-          dailyGoal: normalizePositiveInt(state.dailyGoal, 3, 1, 10),
-          weeklyMainTarget: normalizePositiveInt(state.weeklyMainTarget, 10, 1, 50),
-          recordsByDate,
-          selectedDateInTown: resolveSelectedTownDate(selectedMonth, currentDateKey, selectedDateInTown, recordsByDate)
-        } as QuestownState;
+        browserStorage.removeItem(STORAGE_NAME);
+        hydrationRecoverySetter?.({
+          ...createInitialDataState(),
+          recoveryNotice: HYDRATION_RECOVERY_NOTICE
+        });
       }
     }
   )
 );
 
 export const useTodayRecord = () =>
-  useQuestownStore((state) => {
-    const key = state.currentDateKey;
-    return state.recordsByDate[key] ?? ensureDailyRecord(key);
-  });
+  useQuestownStore((state) => getTodayRecord(state.recordsByDate, state.currentDateKey));
 
 export const useTodayBuildingHeight = () =>
-  useQuestownStore((state) => {
-    const key = state.currentDateKey;
-    const record = state.recordsByDate[key] ?? ensureDailyRecord(key);
-    return getBuildingHeight(record.completedCount);
-  });
+  useQuestownStore((state) => getTodayBuildingHeight(state.recordsByDate, state.currentDateKey));

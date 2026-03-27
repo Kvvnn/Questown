@@ -6,7 +6,7 @@ import { Button } from "@/components/ui";
 import { roofTypeLabel } from "@/domain/building";
 import { getDaysInMonth } from "@/domain/date";
 import { getDominantQuestType, questTypeShortLabel } from "@/domain/quest";
-import { createTownLayout } from "@/domain/town-map";
+import { createTownLayout, getTownMonthProgress } from "@/domain/town-map";
 import { getPreferredTownDate, moveDateInMonth, TownDirection } from "@/domain/town-navigation";
 import { DailyRecord } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
@@ -21,12 +21,12 @@ const directionByKey: Partial<Record<string, TownDirection>> = {
 };
 
 const districtAccent: Record<string, string> = {
-  "Week 1": "bg-emerald-100 text-emerald-700",
-  "Week 2": "bg-sky-100 text-sky-700",
-  "Week 3": "bg-violet-100 text-violet-700",
-  "Week 4": "bg-amber-100 text-amber-700",
-  "Week 5": "bg-pink-100 text-pink-700",
-  "Week 6": "bg-slate-100 text-slate-700"
+  "주거지": "bg-emerald-100 text-emerald-700",
+  "상점가": "bg-sky-100 text-sky-700",
+  "문화지구": "bg-violet-100 text-violet-700",
+  "랜드마크 지구": "bg-amber-100 text-amber-700",
+  "축제 확장지": "bg-pink-100 text-pink-700",
+  "아카이브/오버플로우": "bg-slate-100 text-slate-700"
 };
 
 const formatMonthTitle = (monthKey: string) => {
@@ -53,6 +53,7 @@ export function MonthlyTownView() {
   const selectedMonth = useQuestownStore((state) => state.selectedMonth);
   const currentDateKey = useQuestownStore((state) => state.currentDateKey);
   const recordsByDate = useQuestownStore((state) => state.recordsByDate);
+  const weeklyMainTarget = useQuestownStore((state) => state.weeklyMainTarget);
   const selectedDateInTown = useQuestownStore((state) => state.selectedDateInTown);
   const moveMonth = useQuestownStore((state) => state.moveMonth);
   const selectDateInTown = useQuestownStore((state) => state.selectDateInTown);
@@ -61,6 +62,10 @@ export function MonthlyTownView() {
   const layout = useMemo(() => createTownLayout(selectedMonth, dayCount), [selectedMonth, dayCount]);
   const currentMonthKey = currentDateKey.slice(0, 7);
   const canMoveToNextMonth = selectedMonth < currentMonthKey;
+  const monthProgress = useMemo(
+    () => getTownMonthProgress(layout, recordsByDate, weeklyMainTarget),
+    [layout, recordsByDate, weeklyMainTarget]
+  );
 
   const activeSelectedDate = useMemo(
     () =>
@@ -81,21 +86,20 @@ export function MonthlyTownView() {
 
   const selectedPlot = layout.plots.find((plot) => plot.date === activeSelectedDate);
   const selectedRecord = recordsByDate[activeSelectedDate];
+  const selectedDistrictProgress = selectedPlot ? monthProgress.districtProgressByName[selectedPlot.district] : undefined;
+  const selectedDistrict = layout.districts.find((district) => district.name === selectedPlot?.district);
   const selectedDominantType = getDominantQuestType(selectedRecord, "completed") ?? getDominantQuestType(selectedRecord, "total");
   const previewQuests = getRecordPreview(selectedRecord);
-
-  const monthStats = useMemo(() => {
-    return layout.plots.reduce(
-      (summary, plot) => {
-        const record = recordsByDate[plot.date];
-        summary.builtLots += record && record.completedCount > 0 ? 1 : 0;
-        summary.completed += record?.completedCount ?? 0;
-        summary.total += record?.totalCount ?? 0;
-        return summary;
-      },
-      { builtLots: 0, completed: 0, total: 0 }
-    );
-  }, [layout.plots, recordsByDate]);
+  const districtProgressRate = selectedDistrictProgress && selectedDistrictProgress.targetMain > 0
+    ? Math.min(100, Math.round((selectedDistrictProgress.completedMain / selectedDistrictProgress.targetMain) * 100))
+    : 0;
+  const districtRewardMessage = selectedDistrictProgress
+    ? selectedDistrictProgress.unlocked
+      ? `${selectedDistrict?.rewardLabel ?? "랜드마크"}가 이미 세워졌어요.`
+      : selectedDistrictProgress.remainingMain > 0
+        ? `이 구역에서 main 퀘스트 ${selectedDistrictProgress.remainingMain}개 더 완료하면 랜드마크가 세워져요.`
+        : "이 구역의 랜드마크 준비가 끝났어요."
+    : "구역 정보를 불러오는 중이에요.";
 
   const moveSelection = useCallback(
     (direction: TownDirection) => {
@@ -124,6 +128,14 @@ export function MonthlyTownView() {
           <div className="min-w-0">
             <p className="text-[11px] font-black uppercase tracking-[0.26em] text-slate-400">Quest Town</p>
             <h2 className="truncate text-xl font-black tracking-tight text-slate-900">{formatMonthTitle(selectedMonth)}</h2>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-[11px] font-black text-emerald-700">
+                해금 {monthProgress.coreUnlockedCount}/4
+              </span>
+              <span className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-black text-white">
+                메인 {monthProgress.monthlyMainCompleted}
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -158,24 +170,17 @@ export function MonthlyTownView() {
         <div className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-24 bg-gradient-to-b from-white/40 to-transparent" />
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] h-28 bg-gradient-to-t from-[#b9e2c4]/65 to-transparent" />
 
-        <TownPhaserBoard
-          ref={boardRef}
-          className="absolute inset-0"
-          currentDateKey={currentDateKey}
-          layout={layout}
-          onSelect={selectDateInTown}
-          recordsByDate={recordsByDate}
-          selectedDate={activeSelectedDate}
-        />
-
-        <div className="pointer-events-none absolute left-3 top-3 z-10 flex max-w-[70%] flex-wrap gap-2">
-          <span className="rounded-full bg-white/92 px-3 py-1 text-[11px] font-black text-slate-700 shadow-sm">
-            건물 {monthStats.builtLots}/{layout.plots.length}
-          </span>
-          <span className="rounded-full bg-slate-900/88 px-3 py-1 text-[11px] font-black text-white shadow-sm">
-            완료 {monthStats.completed}
-          </span>
-        </div>
+          <TownPhaserBoard
+            ref={boardRef}
+            className="absolute inset-0"
+            currentDateKey={currentDateKey}
+            districtProgressByName={monthProgress.districtProgressByName}
+            layout={layout}
+            monthProgress={monthProgress}
+            onSelect={selectDateInTown}
+            recordsByDate={recordsByDate}
+            selectedDate={activeSelectedDate}
+          />
 
         <div className="absolute right-3 top-3 z-10 flex flex-col gap-2">
           <Button
@@ -204,9 +209,9 @@ export function MonthlyTownView() {
           </Button>
         </div>
 
-        <div className="pointer-events-none absolute left-3 top-[68px] z-10">
+        <div className="pointer-events-none absolute left-3 top-3 z-10">
           <span className="rounded-full bg-slate-900/70 px-3 py-1 text-[11px] font-semibold text-white/90">
-            드래그로 이동, 탭해서 상세 보기
+            드래그로 이동, 구역 보상 감상
           </span>
         </div>
 
@@ -228,11 +233,11 @@ export function MonthlyTownView() {
                 ) : null}
               </div>
 
-              <h3 className="text-lg font-black tracking-tight text-slate-900">
-                {selectedPlot ? `${selectedPlot.day}일 타운 빌딩` : "건물을 선택해 주세요"}
-              </h3>
-              <p className="text-sm text-slate-500">{activeSelectedDate}</p>
-            </div>
+	              <h3 className="text-lg font-black tracking-tight text-slate-900">
+	                {selectedPlot ? `${selectedPlot.day}일 타운 보상` : "건물을 선택해 주세요"}
+	              </h3>
+	              <p className="text-sm text-slate-500">{activeSelectedDate}</p>
+	            </div>
 
             <div className="flex items-center gap-2">
               <Button
@@ -254,10 +259,35 @@ export function MonthlyTownView() {
             </div>
           </div>
 
+          <div className="mt-4 rounded-[24px] bg-slate-50 px-4 py-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-black uppercase tracking-[0.2em] text-slate-400">District Progress</p>
+                <p className="mt-1 text-sm font-black text-slate-900">
+                  {selectedDistrictProgress?.completedMain ?? 0}/{selectedDistrictProgress?.targetMain ?? 0}
+                </p>
+              </div>
+              <span
+                className={`rounded-full px-3 py-1 text-[11px] font-black ${
+                  selectedDistrictProgress?.unlocked ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                }`}
+              >
+                {selectedDistrictProgress?.unlocked ? "랜드마크 해금" : "랜드마크 준비 중"}
+              </span>
+            </div>
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400"
+                style={{ width: `${districtProgressRate}%` }}
+              />
+            </div>
+            <p className="mt-3 text-sm font-semibold text-slate-600">{districtRewardMessage}</p>
+          </div>
+
           {!selectedRecord ? (
             <div className="mt-4 rounded-[26px] bg-slate-50 px-4 py-4 text-sm text-slate-600">
               <p className="font-bold text-slate-800">아직 기록이 없어요.</p>
-              <p className="mt-1 leading-relaxed">{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
+              <p className="mt-2 leading-relaxed text-slate-500">{getTownDetailEmptyMessage(activeSelectedDate, currentDateKey)}</p>
             </div>
           ) : (
             <>

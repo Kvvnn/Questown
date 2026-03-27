@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { KeyboardEvent, useEffect, useState } from "react";
+import { PwaBootstrap } from "@/components/pwa-bootstrap";
 import { Button, Card } from "@/components/ui";
 import { TabType } from "@/domain/types";
 import { useQuestownStore } from "@/store/questown-store";
@@ -39,6 +40,10 @@ const tabs: Array<{ id: TabType; label: string }> = [
 export default function HomePage() {
   const currentTab = useQuestownStore((state) => state.currentTab);
   const setTab = useQuestownStore((state) => state.setTab);
+  const recoveryNotice = useQuestownStore((state) => state.recoveryNotice);
+  const storageNotice = useQuestownStore((state) => state.storageNotice);
+  const clearRecoveryNotice = useQuestownStore((state) => state.clearRecoveryNotice);
+  const clearStorageNotice = useQuestownStore((state) => state.clearStorageNotice);
   const hydrateToday = useQuestownStore((state) => state.hydrateToday);
   const rolloverToToday = useQuestownStore((state) => state.rolloverToToday);
   const [loadedTabs, setLoadedTabs] = useState<Record<TabType, boolean>>(() => ({
@@ -74,6 +79,26 @@ export default function HomePage() {
   useEffect(() => {
     setLoadedTabs((prev) => (prev[currentTab] ? prev : { ...prev, [currentTab]: true }));
   }, [currentTab]);
+
+  useEffect(() => {
+    if (!recoveryNotice) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      clearRecoveryNotice();
+    }, 5200);
+
+    return () => window.clearTimeout(timeout);
+  }, [clearRecoveryNotice, recoveryNotice]);
+
+  useEffect(() => {
+    if (!storageNotice) return undefined;
+
+    const timeout = window.setTimeout(() => {
+      clearStorageNotice();
+    }, 5200);
+
+    return () => window.clearTimeout(timeout);
+  }, [clearStorageNotice, storageNotice]);
 
   const activateTab = (nextTab: TabType) => {
     setLoadedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
@@ -116,12 +141,50 @@ export default function HomePage() {
       id="main-content"
       className="mx-auto h-[100dvh] w-full max-w-[430px] overflow-hidden px-3 pb-[calc(env(safe-area-inset-bottom)+12px)] pt-[calc(env(safe-area-inset-top)+12px)]"
     >
+      <PwaBootstrap />
+
       <a
         href={currentTab === "today" ? "#panel-today" : currentTab === "town" ? "#panel-town" : "#panel-manage"}
         className="sr-only absolute left-2 top-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:not-sr-only"
       >
         본문으로 바로가기
       </a>
+
+      {recoveryNotice || storageNotice ? (
+        <div className="absolute left-3 right-3 top-[calc(env(safe-area-inset-top)+12px)] z-40 flex flex-col gap-2">
+          {recoveryNotice ? (
+            <div className="rounded-[22px] border border-amber-200 bg-amber-50/95 px-4 py-3 text-sm font-semibold text-amber-900 shadow-[0_16px_28px_rgba(15,23,42,0.14)] backdrop-blur-md">
+              <div className="flex items-start justify-between gap-3">
+                <p>{recoveryNotice}</p>
+                <button
+                  type="button"
+                  onClick={clearRecoveryNotice}
+                  className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-xs font-black text-amber-900"
+                  aria-label="복구 안내 닫기"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+          ) : null}
+
+          {storageNotice ? (
+            <div className="rounded-[22px] border border-rose-200 bg-rose-50/95 px-4 py-3 text-sm font-semibold text-rose-900 shadow-[0_16px_28px_rgba(15,23,42,0.14)] backdrop-blur-md">
+              <div className="flex items-start justify-between gap-3">
+                <p>{storageNotice}</p>
+                <button
+                  type="button"
+                  onClick={clearStorageNotice}
+                  className="shrink-0 rounded-full bg-white/80 px-2 py-1 text-xs font-black text-rose-900"
+                  aria-label="저장소 안내 닫기"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <section className="flex h-full flex-col gap-3">
         <div className="min-h-0 flex-1">

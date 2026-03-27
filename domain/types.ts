@@ -68,4 +68,41 @@ export interface AppBackupData {
   };
 }
 
+export interface StorageHealth {
+  readable: boolean;
+  writable: boolean;
+  degraded: boolean;
+  lastError?: string;
+}
+
+export interface BackupImportPreviewState {
+  currentDateKey: string;
+  selectedMonth: string;
+  dailyGoal: number;
+  weeklyMainTarget: number;
+  recordsByDate: Record<string, DailyRecord>;
+  selectedDateInTown?: string;
+  recoveryNotice?: string;
+}
+
+export interface BackupImportPreview {
+  version: number;
+  exportedAt: string;
+  dateCount: number;
+  earliestDate?: string;
+  latestDate?: string;
+  overwriteDateCount: number;
+  newDateCount: number;
+  hasRepairWarning: boolean;
+  repairSummary?: string;
+  state: BackupImportPreviewState;
+}
+
+export interface LocalAnalyticsSnapshot {
+  avgCompletedLast7: number;
+  finalizedRateLast14: number;
+  finalizedDaysLast14: number;
+  weeklySuccessStreak: number;
+}
+
 export type TabType = "today" | "town" | "manage";
