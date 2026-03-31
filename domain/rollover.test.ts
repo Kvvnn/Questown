@@ -78,6 +78,24 @@ describe("rollover", () => {
     expect(future.recordsByDate["2026-03-25"]?.isFinalized).toBe(false);
   });
 
+  it("reopens a finalized record when it becomes the current day again", () => {
+    let todayRecord = ensureDailyRecord("2026-03-25");
+    const added = addQuestToRecord(todayRecord, { title: "오늘 리뷰 대상", type: "main" });
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    todayRecord = added.record;
+
+    const toggled = toggleQuestInRecord(todayRecord, todayRecord.quests[0].id);
+    expect(toggled.ok).toBe(true);
+    if (!toggled.ok) return;
+
+    const synced = syncStateToToday({ "2026-03-25": finalizeRecord(toggled.record) }, "2026-03-25");
+
+    expect(synced.recordsByDate["2026-03-25"]?.isFinalized).toBe(false);
+    expect(synced.recordsByDate["2026-03-25"]?.roofType).toBe("none");
+    expect(synced.recordsByDate["2026-03-25"]?.completedCount).toBe(1);
+  });
+
   it("preserves completion data when rolling forward a finalized day", () => {
     let record = ensureDailyRecord("2026-03-24");
     const added = addQuestToRecord(record, { title: "메인 작업", type: "main" });

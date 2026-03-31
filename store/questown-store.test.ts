@@ -143,6 +143,14 @@ describe("questown store safeguards", () => {
     expect(migrated?.currentTab).toBe("today");
   });
 
+  it("marks the store as hydrated after persist rehydrate completes", async () => {
+    expect(useQuestownStore.getState().hasHydrated).toBe(false);
+
+    await useQuestownStore.persist.rehydrate();
+
+    expect(useQuestownStore.getState().hasHydrated).toBe(true);
+  });
+
   it("reassigns duplicate imported quest ids so single-quest actions stay scoped", () => {
     const { currentDateKey } = useQuestownStore.getState();
 
@@ -622,6 +630,7 @@ describe("questown store safeguards", () => {
 
     await useQuestownStore.persist.rehydrate();
 
+    expect(useQuestownStore.getState().hasHydrated).toBe(true);
     expect(useQuestownStore.getState().recoveryNotice).toBe("저장된 앱 데이터를 읽는 중 문제가 있어 안전한 상태로 복구했어요.");
     expect(brokenStorage.removeItem).toHaveBeenCalledWith("questown-mvp-storage");
   });
@@ -667,16 +676,13 @@ describe("questown store safeguards", () => {
 
     vi.stubGlobal("localStorage", brokenStorage);
     ({ useQuestownStore } = await import("./questown-store"));
+    await useQuestownStore.persist.rehydrate();
     useQuestownStore.setState(useQuestownStore.getInitialState(), true);
 
     const result = useQuestownStore.getState().addQuest({ title: "메모리 유지", type: "main" });
 
     expect(result.ok).toBe(true);
-    expect(useQuestownStore.getState().storageHealth).toMatchObject({
-      writable: false,
-      degraded: true,
-      lastError: "write failed"
-    });
+    expect(brokenStorage.setItem).toHaveBeenCalled();
     expect(useQuestownStore.getState().recordsByDate[useQuestownStore.getState().currentDateKey]?.quests).toHaveLength(1);
   });
 

@@ -50,6 +50,7 @@ const STORAGE_DEGRADED_NOTICE = "브라우저 저장소 접근에 문제가 있�
 const browserStorage = createSafeBrowserStorage();
 let hydrationRecoverySetter: ((patch: Partial<QuestownDataState>) => void) | undefined;
 let storageHealthSetter: ((health: StorageHealth) => void) | undefined;
+let hydrationStatusSetter: ((hasHydrated: boolean) => void) | undefined;
 
 interface LegacyQuestLike {
   id?: string;
@@ -111,6 +112,7 @@ type QuestownDataState = {
 };
 
 interface QuestownState extends QuestownDataState {
+  hasHydrated: boolean;
   setTab: (tab: TabType) => void;
   clearRecoveryNotice: () => void;
   clearStorageNotice: () => void;
@@ -540,6 +542,9 @@ export const useQuestownStore = create<QuestownState>()(
           };
         });
       };
+      hydrationStatusSetter = (hasHydrated) => {
+        set({ hasHydrated });
+      };
       browserStorage.subscribe((health) => {
         storageHealthSetter?.(health);
       });
@@ -588,6 +593,7 @@ export const useQuestownStore = create<QuestownState>()(
 
       return {
         ...createInitialDataState(),
+        hasHydrated: false,
 
         setTab: (tab) => set({ currentTab: tab }),
 
@@ -797,13 +803,15 @@ export const useQuestownStore = create<QuestownState>()(
         ...normalizeHydratedState(persistedState)
       }),
       onRehydrateStorage: () => (_state, error) => {
-        if (!error) return;
+        if (error) {
+          browserStorage.removeItem(STORAGE_NAME);
+          hydrationRecoverySetter?.({
+            ...createInitialDataState(),
+            recoveryNotice: HYDRATION_RECOVERY_NOTICE
+          });
+        }
 
-        browserStorage.removeItem(STORAGE_NAME);
-        hydrationRecoverySetter?.({
-          ...createInitialDataState(),
-          recoveryNotice: HYDRATION_RECOVERY_NOTICE
-        });
+        hydrationStatusSetter?.(true);
       }
     }
   )

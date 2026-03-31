@@ -3,6 +3,8 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatedNumber } from "@/components/animated-number";
 import { Button, Card } from "@/components/ui";
+import { getRoofPreviewType } from "@/domain/animation";
+import { roofTypeLabel } from "@/domain/building";
 import { getLocalAnalyticsSnapshot } from "@/domain/local-analytics";
 import { BackupImportPreview } from "@/domain/types";
 import { useQuestownStore, useTodayRecord } from "@/store/questown-store";
@@ -57,8 +59,6 @@ export function ManageView() {
   const storageHealth = useQuestownStore((state) => state.storageHealth);
   const dailyGoal = useQuestownStore((state) => state.dailyGoal);
   const weeklyMainTarget = useQuestownStore((state) => state.weeklyMainTarget);
-  const finalizeCurrentDay = useQuestownStore((state) => state.finalizeCurrentDay);
-  const unfinalizeCurrentDay = useQuestownStore((state) => state.unfinalizeCurrentDay);
   const setDailyGoal = useQuestownStore((state) => state.setDailyGoal);
   const setWeeklyMainTarget = useQuestownStore((state) => state.setWeeklyMainTarget);
   const exportBackup = useQuestownStore((state) => state.exportBackup);
@@ -84,6 +84,7 @@ export function ManageView() {
     () => Object.values(recordsByDate).filter((candidate) => candidate.isFinalized).length,
     [recordsByDate]
   );
+  const reviewRoofType = useMemo(() => getRoofPreviewType(record), [record]);
 
   useEffect(() => {
     if (!status) return undefined;
@@ -282,7 +283,7 @@ export function ManageView() {
             <p className="mt-1 text-lg font-black text-slate-900">{analytics.avgCompletedLast7}개</p>
           </div>
           <div className="rounded-[22px] bg-slate-100 px-3 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">14일 마감</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">14일 확정</p>
             <p className="mt-1 text-lg font-black text-slate-900">{formatPercent(analytics.finalizedRateLast14)}</p>
           </div>
           <div className="rounded-[22px] bg-slate-100 px-3 py-3">
@@ -291,7 +292,7 @@ export function ManageView() {
           </div>
         </div>
         <p className="mt-3 text-xs font-semibold text-slate-500">
-          최근 14일 중 {analytics.finalizedDaysLast14}일을 마감했고, 이번 주 기준 메인 목표 연속 성공은 {analytics.weeklySuccessStreak}주예요.
+          최근 14일 중 {analytics.finalizedDaysLast14}일이 자동 확정됐고, 이번 주 기준 메인 목표 연속 성공은 {analytics.weeklySuccessStreak}주예요.
         </p>
       </Card>
 
@@ -305,21 +306,13 @@ export function ManageView() {
             </p>
           </div>
           <div className="rounded-[22px] bg-slate-100 px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Roof</p>
-            <p className="mt-1 text-xl font-black text-slate-900">{record.isFinalized ? "완료" : "열림"}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">예상 지붕</p>
+            <p className="mt-1 text-xl font-black text-slate-900">{roofTypeLabel[reviewRoofType]}</p>
           </div>
         </div>
 
-        <div className="mt-4">
-          <Button
-            type="button"
-            className={`min-h-[60px] rounded-[24px] text-base font-black ${
-              record.isFinalized ? "bg-amber-100 text-amber-900" : "bg-quest-primary text-white"
-            }`}
-            onClick={record.isFinalized ? unfinalizeCurrentDay : finalizeCurrentDay}
-          >
-            {record.isFinalized ? "마감 해제" : "오늘 마감"}
-          </Button>
+        <div className="mt-4 rounded-[22px] bg-indigo-50 px-4 py-4 text-sm font-semibold leading-relaxed text-indigo-700">
+          오늘 기록은 계속 수정할 수 있어요. 날짜가 넘어가면 전날 기록만 자동으로 확정되고, 오늘은 다시 열린 상태로 시작합니다.
         </div>
       </Card>
 

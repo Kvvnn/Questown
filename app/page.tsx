@@ -38,6 +38,7 @@ const tabs: Array<{ id: TabType; label: string }> = [
 ];
 
 export default function HomePage() {
+  const hasHydrated = useQuestownStore((state) => state.hasHydrated);
   const currentTab = useQuestownStore((state) => state.currentTab);
   const setTab = useQuestownStore((state) => state.setTab);
   const recoveryNotice = useQuestownStore((state) => state.recoveryNotice);
@@ -46,11 +47,18 @@ export default function HomePage() {
   const clearStorageNotice = useQuestownStore((state) => state.clearStorageNotice);
   const hydrateToday = useQuestownStore((state) => state.hydrateToday);
   const rolloverToToday = useQuestownStore((state) => state.rolloverToToday);
+  const [isClientReady, setIsClientReady] = useState(false);
   const [loadedTabs, setLoadedTabs] = useState<Record<TabType, boolean>>(() => ({
-    today: currentTab === "today",
-    town: currentTab === "town",
-    manage: currentTab === "manage"
+    today: true,
+    town: false,
+    manage: false
   }));
+  const uiReady = isClientReady && hasHydrated;
+  const visibleTab = uiReady ? currentTab : "today";
+
+  useEffect(() => {
+    setIsClientReady(true);
+  }, []);
 
   useEffect(() => {
     const syncToday = () => {
@@ -77,8 +85,10 @@ export default function HomePage() {
   }, [hydrateToday, rolloverToToday]);
 
   useEffect(() => {
+    if (!uiReady) return;
+
     setLoadedTabs((prev) => (prev[currentTab] ? prev : { ...prev, [currentTab]: true }));
-  }, [currentTab]);
+  }, [currentTab, uiReady]);
 
   useEffect(() => {
     if (!recoveryNotice) return undefined;
@@ -101,6 +111,7 @@ export default function HomePage() {
   }, [clearStorageNotice, storageNotice]);
 
   const activateTab = (nextTab: TabType) => {
+    if (!uiReady) return;
     setLoadedTabs((prev) => (prev[nextTab] ? prev : { ...prev, [nextTab]: true }));
     setTab(nextTab);
   };
@@ -144,13 +155,13 @@ export default function HomePage() {
       <PwaBootstrap />
 
       <a
-        href={currentTab === "today" ? "#panel-today" : currentTab === "town" ? "#panel-town" : "#panel-manage"}
+        href={visibleTab === "today" ? "#panel-today" : visibleTab === "town" ? "#panel-town" : "#panel-manage"}
         className="sr-only absolute left-2 top-2 rounded-lg bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:not-sr-only"
       >
         본문으로 바로가기
       </a>
 
-      {recoveryNotice || storageNotice ? (
+      {uiReady && (recoveryNotice || storageNotice) ? (
         <div className="absolute left-3 right-3 top-[calc(env(safe-area-inset-top)+12px)] z-40 flex flex-col gap-2">
           {recoveryNotice ? (
             <div className="rounded-[22px] border border-amber-200 bg-amber-50/95 px-4 py-3 text-sm font-semibold text-amber-900 shadow-[0_16px_28px_rgba(15,23,42,0.14)] backdrop-blur-md">
@@ -192,40 +203,58 @@ export default function HomePage() {
             id="panel-today"
             role="tabpanel"
             aria-labelledby="tab-today"
-            hidden={currentTab !== "today"}
+            hidden={visibleTab !== "today"}
             tabIndex={-1}
             className="h-full"
           >
-            {loadedTabs.today ? <TodayView /> : null}
+            {loadedTabs.today && uiReady ? (
+              <TodayView />
+            ) : (
+              <Card role="status" aria-live="polite" className="rounded-[28px] text-sm text-slate-500">
+                홈 화면 로딩 중...
+              </Card>
+            )}
           </div>
 
           <div
             id="panel-town"
             role="tabpanel"
             aria-labelledby="tab-town"
-            hidden={currentTab !== "town"}
+            hidden={visibleTab !== "town"}
             tabIndex={-1}
             className="h-full"
           >
-            {loadedTabs.town ? <MonthlyTownView /> : null}
+            {loadedTabs.town && uiReady ? (
+              <MonthlyTownView />
+            ) : (
+              <Card role="status" aria-live="polite" className="rounded-[28px] text-sm text-slate-500">
+                타운 화면 로딩 중...
+              </Card>
+            )}
           </div>
 
           <div
             id="panel-manage"
             role="tabpanel"
             aria-labelledby="tab-manage"
-            hidden={currentTab !== "manage"}
+            hidden={visibleTab !== "manage"}
             tabIndex={-1}
             className="h-full"
           >
-            {loadedTabs.manage ? <ManageView /> : null}
+            {loadedTabs.manage && uiReady ? (
+              <ManageView />
+            ) : (
+              <Card role="status" aria-live="polite" className="rounded-[28px] text-sm text-slate-500">
+                관리 화면 로딩 중...
+              </Card>
+            )}
           </div>
         </div>
 
         <nav className="rounded-[30px] border border-white/80 bg-white/92 p-2 shadow-[0_18px_34px_rgba(15,23,42,0.12)] backdrop-blur-md">
           <div role="tablist" aria-label="Questown 하단 네비게이션" className="grid grid-cols-3 gap-2">
             {tabs.map((tab) => {
-              const active = currentTab === tab.id;
+              const active = visibleTab === tab.id;
 
               return (
                 <Button
@@ -236,6 +265,7 @@ export default function HomePage() {
                   aria-controls={`panel-${tab.id}`}
                   aria-selected={active}
                   tabIndex={active ? 0 : -1}
+                  disabled={!uiReady}
                   className={`min-h-[58px] rounded-[22px] border-0 px-3 ${
                     active ? "bg-quest-primary text-white shadow-[0_10px_24px_rgba(79,70,229,0.28)]" : "bg-transparent text-slate-500 shadow-none"
                   }`}

@@ -67,7 +67,7 @@ export const syncStateToToday = (recordsByDate: Record<string, DailyRecord>, can
     currentDateKey: todayKey,
     recordsByDate: {
       ...recordsByDate,
-      [todayKey]: recalcRecord(todayRecord, todayRecord.isFinalized)
+      [todayKey]: recalcRecord(todayRecord, false)
     }
   };
 };
