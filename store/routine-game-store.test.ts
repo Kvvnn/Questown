@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NIGHT_ROUTINE_ID } from "../domain/game-seeds";
 
 type RoutineGameStoreModule = typeof import("./routine-game-store");
 
@@ -17,6 +18,15 @@ const createLocalStorageMock = () => {
       storage.clear();
     })
   };
+};
+
+const advanceAndCompleteAllSteps = (useRoutineGameStore: RoutineGameStoreModule["useRoutineGameStore"]) => {
+  const stepCount = 5;
+  const baseTime = new Date();
+  for (let stepIndex = 0; stepIndex < stepCount; stepIndex += 1) {
+    vi.setSystemTime(new Date(baseTime.getTime() + (stepIndex * 60 + 20) * 1000));
+    useRoutineGameStore.getState().completeCurrentStep();
+  }
 };
 
 describe("routine game store", () => {
@@ -218,10 +228,50 @@ describe("routine game store", () => {
     expect(session.status).toBe("completed");
     expect(session.endedAt).toBeTruthy();
     expect(state.sessionRuntimeBySessionId[sessionId as string]).toBeTruthy();
+    expect(state.floorsById[`floor-${sessionId}`]).toBeUndefined();
+    expect(state.dailyBuildingsByDate["2026-03-31"]).toBeUndefined();
 
     useRoutineGameStore.getState().dismissCompletedSession();
     expect(useRoutineGameStore.getState().activeSessionId).toBeUndefined();
     expect(useRoutineGameStore.getState().sessionRuntimeBySessionId[sessionId as string]).toBeUndefined();
+    expect(useRoutineGameStore.getState().sessionsById[sessionId as string]?.status).toBe("reviewed");
+  });
+
+  it("creates a floor and daily building cache when a clear+ session finishes", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+    const routineId = useRoutineGameStore.getState().selectedRoutineId as string;
+    const { sessionId } = useRoutineGameStore.getState().startRoutineSession(routineId, "manual");
+
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+
+    const state = useRoutineGameStore.getState();
+    expect(state.sessionsById[sessionId as string]?.resultGrade).toBe("Perfect");
+    expect(state.floorsById[`floor-${sessionId}`]?.qualityTier).toBe("signature");
+    expect(state.dailyBuildingsByDate["2026-03-31"]?.successfulSessionCount).toBe(1);
+    expect(state.dailyBuildingsByDate["2026-03-31"]?.floorIds).toEqual([`floor-${sessionId}`]);
+  });
+
+  it("rebuilds floor and building caches during hydrate from reviewed sessions", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+    const routineId = useRoutineGameStore.getState().selectedRoutineId as string;
+    const { sessionId } = useRoutineGameStore.getState().startRoutineSession(routineId, "manual");
+
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+
+    useRoutineGameStore.getState().dismissCompletedSession();
+    useRoutineGameStore.setState({
+      floorsById: {},
+      dailyBuildingsByDate: {}
+    });
+
+    useRoutineGameStore.getState().hydrateGame();
+
+    const state = useRoutineGameStore.getState();
+    expect(state.sessionsById[sessionId as string]?.status).toBe("reviewed");
+    expect(state.floorsById[`floor-${sessionId}`]).toBeTruthy();
+    expect(state.dailyBuildingsByDate["2026-03-31"]?.successfulSessionCount).toBe(1);
   });
 
   it("falls back to launcher when hydration finds an active session without runtime", async () => {
@@ -240,6 +290,97 @@ describe("routine game store", () => {
 
     expect(useRoutineGameStore.getState().activeSessionId).toBeUndefined();
     expect(useRoutineGameStore.getState().activeView).toBe("launcher");
+  });
+
+  it("branches to review gate after a successful day-closing routine when surfaced routines remain", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+    useRoutineGameStore.getState().openRoutinePrelaunch(NIGHT_ROUTINE_ID);
+    vi.setSystemTime(new Date("2026-03-31T21:00:00+09:00"));
+    const { sessionId } = useRoutineGameStore.getState().startRoutineSession(NIGHT_ROUTINE_ID, "time");
+
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+    expect(useRoutineGameStore.getState().sessionsById[sessionId as string]?.resultGrade).toBe("Perfect");
+
+    useRoutineGameStore.getState().dismissCompletedSession();
+    expect(useRoutineGameStore.getState().activeView).toBe("review_gate");
+  });
+
+  it("branches straight to day review when the day closer finishes and no surfaced routine remains", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+
+    const morningSession = useRoutineGameStore.getState().startRoutineSession(useRoutineGameStore.getState().selectedRoutineId as string, "manual");
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+    useRoutineGameStore.getState().dismissCompletedSession();
+
+    vi.setSystemTime(new Date("2026-03-31T21:00:00+09:00"));
+    useRoutineGameStore.getState().openRoutinePrelaunch(NIGHT_ROUTINE_ID);
+    const nightSession = useRoutineGameStore.getState().startRoutineSession(NIGHT_ROUTINE_ID, "time");
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+    expect(useRoutineGameStore.getState().sessionsById[morningSession.sessionId as string]?.resultGrade).toBe("Perfect");
+    expect(useRoutineGameStore.getState().sessionsById[nightSession.sessionId as string]?.resultGrade).toBe("Perfect");
+
+    useRoutineGameStore.getState().dismissCompletedSession();
+    expect(useRoutineGameStore.getState().activeView).toBe("day_review");
+  });
+
+  it("confirms day review and writes roof, summary id, and finalized timestamp", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+    useRoutineGameStore.getState().startRoutineSession(useRoutineGameStore.getState().selectedRoutineId as string, "manual");
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+    useRoutineGameStore.getState().dismissCompletedSession();
+
+    useRoutineGameStore.getState().openTodayReview();
+    expect(useRoutineGameStore.getState().activeView).toBe("day_review");
+
+    expect(useRoutineGameStore.getState().confirmDayReview()).toEqual({ ok: true });
+
+    const building = useRoutineGameStore.getState().dailyBuildingsByDate["2026-03-31"];
+    expect(building?.roofType).toBe("high");
+    expect(building?.reviewSummaryId).toBe("review-2026-03-31");
+    expect(building?.finalizedAt).toBeTruthy();
+    expect(useRoutineGameStore.getState().reviewSummariesById["review-2026-03-31"]?.source).toBe("fallback");
+    expect(useRoutineGameStore.getState().activeView).toBe("launcher");
+  });
+
+  it("invalidates a finalized review when a new successful session lands on the same game day", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+
+    useRoutineGameStore.getState().startRoutineSession(useRoutineGameStore.getState().selectedRoutineId as string, "manual");
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+    useRoutineGameStore.getState().dismissCompletedSession();
+    useRoutineGameStore.getState().confirmDayReview();
+
+    vi.setSystemTime(new Date("2026-03-31T21:00:00+09:00"));
+    useRoutineGameStore.getState().openRoutinePrelaunch(NIGHT_ROUTINE_ID);
+    useRoutineGameStore.getState().startRoutineSession(NIGHT_ROUTINE_ID, "time");
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+
+    const building = useRoutineGameStore.getState().dailyBuildingsByDate["2026-03-31"];
+    expect(building?.successfulSessionCount).toBe(2);
+    expect(building?.finalizedAt).toBeUndefined();
+    expect(building?.reviewSummaryId).toBeUndefined();
+    expect(useRoutineGameStore.getState().reviewSummariesById["review-2026-03-31"]).toBeUndefined();
+  });
+
+  it("auto-finalizes past game days during sync after the 5AM rollover", async () => {
+    await useRoutineGameStore.persist.rehydrate();
+    useRoutineGameStore.getState().hydrateGame();
+    useRoutineGameStore.getState().startRoutineSession(useRoutineGameStore.getState().selectedRoutineId as string, "manual");
+    advanceAndCompleteAllSteps(useRoutineGameStore);
+    useRoutineGameStore.getState().dismissCompletedSession();
+
+    expect(useRoutineGameStore.getState().dailyBuildingsByDate["2026-03-31"]?.finalizedAt).toBeUndefined();
+
+    vi.setSystemTime(new Date("2026-04-01T05:10:00+09:00"));
+    const currentGameDateKey = useRoutineGameStore.getState().syncGameDay();
+
+    expect(currentGameDateKey).toBe("2026-04-01");
+    expect(useRoutineGameStore.getState().dailyBuildingsByDate["2026-03-31"]?.finalizedAt).toBeTruthy();
+    expect(useRoutineGameStore.getState().reviewSummariesById["review-2026-03-31"]).toBeTruthy();
   });
 
   it("resets routines and sessions without reintroducing seed data immediately", async () => {

@@ -62,6 +62,8 @@ describe("routine dev shell", () => {
         timeBonus: 0,
         comboBonus: 0,
         clearBonus: 0,
+        cleanRunBonus: 0,
+        firstSessionBonus: 0,
         focusBonus: 0,
         streakBonus: 0,
         totalScore: 0,

@@ -1,12 +1,16 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { buildFallbackReviewSummary, computeDailyRoofType } from "@/domain/day-review";
+import { getFloorQualityLabel, getRoofBadgeClassName, getRoofLabel } from "@/domain/game-building";
+import { toGameDateKey } from "@/domain/game-day";
 import {
   getActiveSession,
   getActiveStepTiming,
   getCurrentStep,
   getLauncherHeroRoutine,
   getLauncherSurpriseQuest,
+  getRemainingReviewRoutines,
   getNextStepPreview,
   getNextScheduledRoutine,
   getRoutineStreakSummary,
@@ -16,8 +20,10 @@ import {
 } from "@/domain/game-selectors";
 import {
   DailyBuilding,
+  Floor,
   GameActiveView,
   NextScheduledRoutineCandidate,
+  ReviewSummary,
   Routine,
   RoutineSession,
   SessionRuntime,
@@ -26,6 +32,7 @@ import {
   SessionStepResult,
   SurpriseQuest
 } from "@/domain/game-types";
+import { getFallbackResultCommentary, RESULT_LOOP_AUTO_DISMISS_MS, shouldShowResultLoop } from "@/domain/result-loop";
 import { Button, Card } from "@/components/ui";
 import { useRoutineGameStore } from "@/store/routine-game-store";
 
@@ -117,8 +124,12 @@ export interface RoutineLauncherContentProps {
   sessionRuntimeBySessionId: Record<string, SessionRuntime>;
   stepResultsBySessionId: Record<string, SessionStepResult[]>;
   dailyBuildingsByDate: Record<string, DailyBuilding>;
+  floorsById: Record<string, Floor>;
+  dismissedRemainingRoutineIdsByDate: Record<string, string[]>;
   surpriseQuestsById: Record<string, SurpriseQuest>;
+  reviewSummariesById: Record<string, ReviewSummary>;
   openRoutinePrelaunch: (routineId: string) => void;
+  openTodayReview: () => void;
   returnToLauncher: () => void;
   openActiveSession: () => void;
   startRoutineSession: (routineId: string, triggerSource: "manual" | "time" | "location" | "ai_recommended") => {
@@ -131,6 +142,10 @@ export interface RoutineLauncherContentProps {
   completeCurrentStep: () => { ok: boolean; reason?: string; completedSession?: boolean };
   skipCurrentStep: () => { ok: boolean; reason?: string; completedSession?: boolean };
   dismissCompletedSession: () => void;
+  dismissRemainingRoutineForToday: (routineId: string) => void;
+  confirmDayReview: () => { ok: boolean; reason?: string };
+  closeDayReview: () => void;
+  setActiveView: (view: GameActiveView) => void;
   now?: Date;
 }
 
@@ -145,6 +160,7 @@ function LauncherHome({
   sessionsById,
   activeSessionId,
   triggersByRoutineId,
+  openTodayReview,
   openRoutinePrelaunch,
   openActiveSession,
   now
@@ -159,6 +175,7 @@ function LauncherHome({
   sessionsById: Record<string, RoutineSession>;
   activeSessionId?: string;
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  openTodayReview: () => void;
   openRoutinePrelaunch: (routineId: string) => void;
   openActiveSession: () => void;
   now: Date;
@@ -167,6 +184,8 @@ function LauncherHome({
   const activeRoutine = activeSession ? routinesById[activeSession.routineId] : undefined;
   const heroRoutine = heroRoutineId ? routinesById[heroRoutineId] : undefined;
   const heroSteps = heroRoutine ? stepsByRoutineId[heroRoutine.id] ?? [] : [];
+  const currentGameDateKey = toGameDateKey(now);
+  const currentBuilding = dailyBuildingsByDate[currentGameDateKey];
   const todayBuildingPreview = getTodayBuildingPreview(dailyBuildingsByDate, now);
   const streakSummary = getRoutineStreakSummary(dailyBuildingsByDate, routinesById);
   const surpriseQuest = getLauncherSurpriseQuest(surpriseQuestsById, now);
@@ -246,11 +265,21 @@ function LauncherHome({
       <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
         <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">오늘 building 진행</p>
         {todayBuildingPreview.hasBuilding ? (
-          <div className="mt-3 grid grid-cols-3 gap-2 text-sm font-semibold text-slate-700">
-            <span className="rounded-2xl bg-slate-50 px-3 py-3">floor {todayBuildingPreview.floorCount}</span>
-            <span className="rounded-2xl bg-slate-50 px-3 py-3">roof {todayBuildingPreview.roofType}</span>
-            <span className="rounded-2xl bg-slate-50 px-3 py-3">score {todayBuildingPreview.totalScore}</span>
-          </div>
+          <>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-sm font-semibold text-slate-700">
+              <span className="rounded-2xl bg-slate-50 px-3 py-3">floor {todayBuildingPreview.floorCount}</span>
+              <span className="rounded-2xl bg-slate-50 px-3 py-3">{getRoofLabel(todayBuildingPreview.roofType)}</span>
+              <span className="rounded-2xl bg-slate-50 px-3 py-3">score {todayBuildingPreview.totalScore}</span>
+            </div>
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold text-slate-500">
+                {currentBuilding?.finalizedAt ? "오늘 요약이 확정되어 있습니다." : "지금 상태로 하루 리뷰를 열 수 있습니다."}
+              </p>
+              <Button className="border-slate-200 bg-white" onClick={openTodayReview}>
+                오늘 리뷰
+              </Button>
+            </div>
+          </>
         ) : (
           <ZeroStateNote>오늘 세션이 쌓이면 floor와 roof 요약이 이 카드에 표시됩니다.</ZeroStateNote>
         )}
@@ -279,6 +308,288 @@ function LauncherHome({
           <ZeroStateNote>AI 또는 규칙 기반 이벤트가 열리면 surprise quest 슬롯이 여기에 나타납니다.</ZeroStateNote>
         )}
       </Card>
+    </div>
+  );
+}
+
+function ReviewBuildingStack({
+  building,
+  floorsById
+}: {
+  building: DailyBuilding;
+  floorsById: Record<string, Floor>;
+}) {
+  return (
+    <div className="flex flex-wrap gap-3">
+      {building.floorIds.map((floorId, index) => {
+        const floor = floorsById[floorId];
+        if (!floor) return null;
+
+        return (
+          <div key={floorId} className="flex min-w-[124px] flex-1 flex-col rounded-[24px] border border-slate-200 bg-white px-4 py-4">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">floor {index + 1}</p>
+            <h4 className="mt-2 text-base font-black tracking-[-0.03em] text-slate-950">{getFloorQualityLabel(floor.qualityTier)}</h4>
+            <p className="mt-2 text-sm text-slate-500">{floor.visualStyleKey}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ReviewGateView({
+  remainingRoutines,
+  stepsByRoutineId,
+  triggersByRoutineId,
+  openRoutinePrelaunch,
+  dismissRemainingRoutineForToday,
+  closeDayReview,
+  setActiveView
+}: {
+  remainingRoutines: Routine[];
+  stepsByRoutineId: Record<string, RoutineStep[]>;
+  triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  openRoutinePrelaunch: (routineId: string) => void;
+  dismissRemainingRoutineForToday: (routineId: string) => void;
+  closeDayReview: () => void;
+  setActiveView: (view: GameActiveView) => void;
+}) {
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto rounded-[34px] border border-slate-900/5 bg-slate-950 px-5 py-5 text-white shadow-[0_30px_72px_rgba(15,23,42,0.32)]">
+      <div>
+        <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-300">Review Gate</p>
+        <h1 className="mt-2 text-3xl font-black tracking-[-0.05em]">남은 세션을 수행하면 지붕을 더 높일 수 있습니다.</h1>
+        <p className="mt-3 text-sm leading-6 text-slate-300">오늘 surfaced 된 추천 루틴 중 아직 성공하지 않은 세션만 보여 줍니다.</p>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-3">
+        {remainingRoutines.length > 0 ? (
+          remainingRoutines.map((routine) => (
+            <Card key={routine.id} className="rounded-[26px] border border-white/12 bg-white/8 px-4 py-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">{routine.category}</p>
+                  <h3 className="mt-2 text-xl font-black tracking-[-0.03em] text-white">{routine.name}</h3>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    {stepsByRoutineId[routine.id]?.length ?? 0} step · {formatTriggerSummary(triggersByRoutineId[routine.id] ?? [])}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="rounded-full border border-white/12 px-3 py-1 text-xs font-black text-slate-300"
+                  onClick={() => dismissRemainingRoutineForToday(routine.id)}
+                >
+                  X
+                </button>
+              </div>
+              <div className="mt-4">
+                <Button className="border-0 bg-white text-slate-950" onClick={() => openRoutinePrelaunch(routine.id)}>
+                  세션 열기
+                </Button>
+              </div>
+            </Card>
+          ))
+        ) : (
+          <Card className="rounded-[26px] border border-white/12 bg-white/8 px-4 py-4 text-sm leading-6 text-slate-300">
+            남은 세션이 없습니다. 지금 바로 하루 리뷰로 넘어갈 수 있습니다.
+          </Card>
+        )}
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <Button className="border-0 bg-white text-slate-950" onClick={() => setActiveView("day_review")}>
+          지금 리뷰 보기
+        </Button>
+        <Button className="bg-white/10 text-white" onClick={closeDayReview}>
+          런처로 돌아가기
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function DayReviewView({
+  dateKey,
+  building,
+  floorsById,
+  sessionsById,
+  routinesById,
+  stepsByRoutineId,
+  stepResultsBySessionId,
+  triggersByRoutineId,
+  reviewSummariesById,
+  dismissedRoutineIds,
+  confirmDayReview,
+  closeDayReview,
+  now
+}: {
+  dateKey: string;
+  building?: DailyBuilding;
+  floorsById: Record<string, Floor>;
+  sessionsById: Record<string, RoutineSession>;
+  routinesById: Record<string, Routine>;
+  stepsByRoutineId: Record<string, RoutineStep[]>;
+  stepResultsBySessionId: Record<string, SessionStepResult[]>;
+  triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  reviewSummariesById: Record<string, ReviewSummary>;
+  dismissedRoutineIds: string[];
+  confirmDayReview: () => { ok: boolean; reason?: string };
+  closeDayReview: () => void;
+  now: Date;
+}) {
+  const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
+
+  if (!building) {
+    return (
+      <div className="flex h-full flex-col justify-center gap-4">
+        <Card className="rounded-[30px] border border-white/80 bg-white/92 px-5 py-5">
+          <h2 className="text-xl font-black tracking-[-0.03em] text-slate-950">리뷰할 building이 아직 없습니다.</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">오늘 `Clear+` 세션이 쌓이면 여기서 지붕과 하루 요약을 확인할 수 있습니다.</p>
+          <Button className="mt-4 bg-white" onClick={closeDayReview}>
+            런처로 돌아가기
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  const successfulSessions = building.sessionIds
+    .map((sessionId) => sessionsById[sessionId])
+    .filter((session): session is RoutineSession => !!session);
+  const provisionalRoof = computeDailyRoofType({
+    successfulSessions,
+    stepResultsBySessionId,
+    stepsByRoutineId
+  });
+  const summary =
+    (building.reviewSummaryId ? reviewSummariesById[building.reviewSummaryId] : undefined) ??
+    buildFallbackReviewSummary({
+      dateKey,
+      building,
+      sessionsById,
+      routinesById,
+      stepResultsBySessionId,
+      stepsByRoutineId,
+      triggersByRoutineId,
+      dismissedRemainingRoutineIds: dismissedRoutineIds,
+      now
+    });
+  const roofType = building.finalizedAt ? building.roofType : provisionalRoof;
+  const dismissedRoutineNames = dismissedRoutineIds.map((routineId) => routinesById[routineId]?.name ?? routineId);
+  const streakEntries = Object.entries(building.streakSnapshot)
+    .map(([routineId, streak]) => ({
+      name: routinesById[routineId]?.name ?? routineId,
+      streak
+    }))
+    .sort((left, right) => right.streak - left.streak || left.name.localeCompare(right.name, "en"));
+
+  return (
+    <div className="flex h-full flex-col gap-4 overflow-y-auto rounded-[34px] border border-slate-900/5 bg-[#fff9ee] px-5 py-5 text-slate-950 shadow-[0_30px_72px_rgba(15,23,42,0.18)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-500">Day Review</p>
+          <h1 className="mt-2 text-3xl font-black tracking-[-0.05em]">오늘 정산을 확인하고 지붕을 닫습니다.</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-600">
+            review를 확정해도 같은 게임 날짜에 새 성공 세션이 생기면 다시 정산이 필요합니다.
+          </p>
+        </div>
+        <span className={getRoofBadgeClassName(roofType)}>{getRoofLabel(roofType)}</span>
+      </div>
+
+      <Card className="rounded-[28px] border border-amber-100 bg-white px-4 py-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Today Building</p>
+            <h3 className="mt-2 text-xl font-black tracking-[-0.03em] text-slate-950">
+              floor {building.floorIds.length} · score {building.totalScore}
+            </h3>
+          </div>
+          <div className="text-right text-xs font-semibold text-slate-500">
+            <div>avg {building.averageNormalizedScore.toFixed(2)}</div>
+            <div className="mt-1">{building.finalizedAt ? `확정 ${formatStartedAt(building.finalizedAt)}` : "아직 미확정"}</div>
+          </div>
+        </div>
+        <div className="mt-4">
+          <ReviewBuildingStack building={building} floorsById={floorsById} />
+        </div>
+      </Card>
+
+      <Card className="rounded-[28px] border border-amber-100 bg-white px-4 py-4">
+        <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">오늘 성공한 루틴</p>
+        <div className="mt-3 flex flex-col gap-3">
+          {successfulSessions.map((session) => (
+            <div key={session.id} className="rounded-[22px] border border-slate-200 bg-slate-50 px-4 py-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-black tracking-[-0.03em] text-slate-950">{routinesById[session.routineId]?.name ?? session.routineId}</h4>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {session.resultGrade} · score {session.totalScore} · step {session.completedStepCount}/{session.completedStepCount + session.skippedStepCount}
+                  </p>
+                </div>
+                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-black uppercase tracking-[0.16em] text-slate-600">
+                  streak {building.streakSnapshot[session.routineId] ?? 0}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card className="rounded-[28px] border border-amber-100 bg-white px-4 py-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">오늘 요약</p>
+          <h3 className="mt-3 text-xl font-black tracking-[-0.03em] text-slate-950">{summary.headline}</h3>
+          <p className="mt-3 text-sm leading-6 text-slate-600">{summary.body}</p>
+          <div className="mt-4">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Tomorrow Hint</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{summary.tomorrowHints[0] ?? "내일 첫 추천 루틴은 다음 phase에서 더 정교하게 제안됩니다."}</p>
+          </div>
+        </Card>
+
+        <Card className="rounded-[28px] border border-amber-100 bg-white px-4 py-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Streak / Friction</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {streakEntries.length > 0 ? (
+              streakEntries.map((entry) => (
+                <span key={entry.name} className="rounded-full border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">
+                  {entry.name} {entry.streak}
+                </span>
+              ))
+            ) : (
+              <span className="text-sm text-slate-500">아직 누적 streak가 없습니다.</span>
+            )}
+          </div>
+          <div className="mt-4">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Dismissed Remaining</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {dismissedRoutineNames.length > 0 ? dismissedRoutineNames.join(", ") : "오늘 review 계산에서 제외한 루틴이 없습니다."}
+            </p>
+          </div>
+          <div className="mt-4">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Stable Routines</p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {summary.stableRoutines.length > 0 ? summary.stableRoutines.join(", ") : "오늘은 아직 안정적으로 닫힌 루틴이 없습니다."}
+            </p>
+          </div>
+        </Card>
+      </div>
+
+      {errorMessage ? <Card className="rounded-[22px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">{errorMessage}</Card> : null}
+
+      <div className="grid grid-cols-2 gap-3">
+        <Button
+          className="border-0 bg-slate-950 text-white"
+          onClick={() => {
+            const result = confirmDayReview();
+            setErrorMessage(result.ok ? undefined : result.reason);
+          }}
+        >
+          오늘 정산 확정
+        </Button>
+        <Button className="bg-white" onClick={closeDayReview}>
+          닫기
+        </Button>
+      </div>
     </div>
   );
 }
@@ -657,14 +968,35 @@ function SessionRuntimeView({
 function SessionCompletedView({
   session,
   routine,
+  floor,
   stepResults,
   dismissCompletedSession
 }: {
   session?: RoutineSession;
   routine?: Routine;
+  floor?: Floor;
   stepResults: SessionStepResult[];
   dismissCompletedSession: () => void;
 }) {
+  const shouldRenderResultLoop = shouldShowResultLoop(session);
+
+  useEffect(() => {
+    if (!session || !routine) return;
+
+    if (!shouldRenderResultLoop) {
+      dismissCompletedSession();
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      dismissCompletedSession();
+    }, RESULT_LOOP_AUTO_DISMISS_MS);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [dismissCompletedSession, routine, session, shouldRenderResultLoop]);
+
   if (!session || !routine) {
     return (
       <div className="flex h-full flex-col justify-center gap-3">
@@ -678,38 +1010,76 @@ function SessionCompletedView({
     );
   }
 
+  if (!shouldRenderResultLoop) {
+    return (
+      <div className="flex h-full flex-col justify-center gap-3">
+        <Card className="rounded-[30px] border border-white/80 bg-white/92 px-5 py-5">
+          <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">런처로 돌아가는 중...</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">이번 세션은 floor가 생성되지 않아 결과 루프 없이 바로 복귀합니다.</p>
+        </Card>
+      </div>
+    );
+  }
+
+  const fallbackCommentary = getFallbackResultCommentary(session);
+  const stepSummary = `${session.completedStepCount} complete · ${session.skippedStepCount} skipped`;
+
   return (
     <div className="flex h-full flex-col justify-between rounded-[34px] border border-slate-900/5 bg-slate-950 px-5 py-5 text-white shadow-[0_30px_72px_rgba(15,23,42,0.32)]">
       <div>
-        <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">세션 완료</p>
+        <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">Result Loop</p>
         <h1 className="mt-2 text-3xl font-black tracking-[-0.05em]">{routine.name}</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-300">Phase 4에서 점수와 등급이 들어옵니다. 지금은 완료 기록만 고정합니다.</p>
+        <p className="mt-3 text-sm leading-6 text-slate-300">짧은 결과 루프를 보여준 뒤 자동으로 런처로 돌아갑니다.</p>
       </div>
 
       <div className="mt-6 grid grid-cols-2 gap-3">
-        <div className="rounded-[24px] bg-white/10 px-4 py-4 text-sm font-semibold text-slate-200">
-          <div>완료 step {session.completedStepCount}</div>
-          <div className="mt-2">skip step {session.skippedStepCount}</div>
+        <div className="rounded-[24px] bg-white/10 px-4 py-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">grade</p>
+          <div className="mt-2 text-3xl font-black tracking-[-0.05em] text-white">{session.resultGrade}</div>
+          <div className="mt-2 text-sm font-semibold text-slate-200">score {session.totalScore}</div>
         </div>
         <div className="rounded-[24px] bg-white/10 px-4 py-4 text-sm font-semibold text-slate-200">
-          <div>started {formatStartedAt(session.startedAt)}</div>
-          <div className="mt-2">ended {session.endedAt ? formatStartedAt(session.endedAt) : "-"}</div>
+          <div>normalized {typeof session.normalizedScore === "number" ? session.normalizedScore.toFixed(2) : "-"}</div>
+          <div className="mt-2">{stepSummary}</div>
         </div>
       </div>
 
-      <Card className="mt-6 rounded-[26px] border border-white/12 bg-white/8 px-4 py-4">
-        <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">Recorded Results</p>
-        <div className="mt-3 flex flex-col gap-2">
-          {stepResults.map((result) => (
-            <div key={result.id} className="rounded-[18px] bg-white/8 px-3 py-3 text-sm font-semibold text-slate-200">
-              step {result.order} · {result.status} · {result.elapsedSec}s
-            </div>
-          ))}
-        </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <span className="rounded-[20px] bg-white/8 px-3 py-3 text-xs font-black uppercase tracking-[0.16em] text-slate-200">
+          clean {session.cleanRunBonus}
+        </span>
+        <span className="rounded-[20px] bg-white/8 px-3 py-3 text-xs font-black uppercase tracking-[0.16em] text-slate-200">
+          focus {session.focusBonus}
+        </span>
+        <span className="rounded-[20px] bg-white/8 px-3 py-3 text-xs font-black uppercase tracking-[0.16em] text-slate-200">
+          first {session.firstSessionBonus}
+        </span>
+        <span className="rounded-[20px] bg-white/8 px-3 py-3 text-xs font-black uppercase tracking-[0.16em] text-slate-200">
+          streak {session.streakBonus}
+        </span>
+      </div>
+
+      <Card className="mt-5 rounded-[26px] border border-white/12 bg-white/8 px-4 py-4">
+        <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">New Floor</p>
+        {floor ? (
+          <div className="mt-3">
+            <p className="text-2xl font-black tracking-[-0.04em] text-white">{floor.qualityTier}</p>
+            <p className="mt-2 text-sm leading-6 text-slate-300">{floor.visualStyleKey}</p>
+          </div>
+        ) : (
+          <p className="mt-3 text-sm leading-6 text-slate-300">이번 세션에서는 새 floor가 생성되지 않았습니다.</p>
+        )}
+      </Card>
+
+      <Card className="mt-4 rounded-[26px] border border-white/12 bg-white/8 px-4 py-4">
+        <p className="text-xs font-black uppercase tracking-[0.2em] text-slate-400">AI comment</p>
+        <p className="mt-3 text-base font-semibold leading-7 text-white">{fallbackCommentary}</p>
+        <p className="mt-3 text-sm leading-6 text-slate-300">이번 세션 ornament 없음</p>
+        <p className="mt-2 text-xs font-semibold text-slate-400">recorded step score {stepResults.reduce((sum, result) => sum + result.scoreEarned, 0)}</p>
       </Card>
 
       <Button className="mt-6 rounded-[28px] border-0 bg-white py-4 text-base font-black text-slate-950" onClick={dismissCompletedSession}>
-        런처로 돌아가기
+        즉시 닫기
       </Button>
     </div>
   );
@@ -726,8 +1096,12 @@ export function RoutineLauncherContent({
   sessionRuntimeBySessionId,
   stepResultsBySessionId,
   dailyBuildingsByDate,
+  floorsById,
+  dismissedRemainingRoutineIdsByDate,
   surpriseQuestsById,
+  reviewSummariesById,
   openRoutinePrelaunch,
+  openTodayReview,
   returnToLauncher,
   openActiveSession,
   startRoutineSession,
@@ -736,6 +1110,10 @@ export function RoutineLauncherContent({
   completeCurrentStep,
   skipCurrentStep,
   dismissCompletedSession,
+  dismissRemainingRoutineForToday,
+  confirmDayReview,
+  closeDayReview,
+  setActiveView,
   now = new Date()
 }: RoutineLauncherContentProps) {
   const visibleView = activeView === "debug" ? "launcher" : activeView;
@@ -753,6 +1131,16 @@ export function RoutineLauncherContent({
     : null;
   const activeSession = getActiveSession(sessionsById, activeSessionId);
   const activeRoutine = activeSession ? routinesById[activeSession.routineId] : undefined;
+  const currentGameDateKey = toGameDateKey(now);
+  const currentBuilding = dailyBuildingsByDate[currentGameDateKey];
+  const dismissedRoutineIds = dismissedRemainingRoutineIdsByDate[currentGameDateKey] ?? [];
+  const remainingReviewRoutines = getRemainingReviewRoutines({
+    routinesById,
+    triggersByRoutineId,
+    sessionsById,
+    dismissedRoutineIds,
+    now
+  });
 
   if (visibleView === "prelaunch") {
     return (
@@ -767,11 +1155,46 @@ export function RoutineLauncherContent({
     );
   }
 
+  if (visibleView === "review_gate") {
+    return (
+      <ReviewGateView
+        remainingRoutines={remainingReviewRoutines}
+        stepsByRoutineId={stepsByRoutineId}
+        triggersByRoutineId={triggersByRoutineId}
+        openRoutinePrelaunch={openRoutinePrelaunch}
+        dismissRemainingRoutineForToday={dismissRemainingRoutineForToday}
+        closeDayReview={closeDayReview}
+        setActiveView={setActiveView}
+      />
+    );
+  }
+
+  if (visibleView === "day_review") {
+    return (
+      <DayReviewView
+        dateKey={currentGameDateKey}
+        building={currentBuilding}
+        floorsById={floorsById}
+        sessionsById={sessionsById}
+        routinesById={routinesById}
+        stepsByRoutineId={stepsByRoutineId}
+        stepResultsBySessionId={stepResultsBySessionId}
+        triggersByRoutineId={triggersByRoutineId}
+        reviewSummariesById={reviewSummariesById}
+        dismissedRoutineIds={dismissedRoutineIds}
+        confirmDayReview={confirmDayReview}
+        closeDayReview={closeDayReview}
+        now={now}
+      />
+    );
+  }
+
   if (visibleView === "session") {
     return activeSession?.status === "completed" ? (
       <SessionCompletedView
         session={activeSession}
         routine={activeRoutine}
+        floor={activeSessionId ? floorsById[`floor-${activeSessionId}`] : undefined}
         stepResults={activeSessionId ? stepResultsBySessionId[activeSessionId] ?? [] : []}
         dismissCompletedSession={dismissCompletedSession}
       />
@@ -811,6 +1234,7 @@ export function RoutineLauncherContent({
       sessionsById={sessionsById}
       activeSessionId={activeSessionId}
       triggersByRoutineId={triggersByRoutineId}
+      openTodayReview={openTodayReview}
       openRoutinePrelaunch={openRoutinePrelaunch}
       openActiveSession={openActiveSession}
       now={now}
@@ -829,8 +1253,12 @@ export function RoutineLauncher() {
   const sessionRuntimeBySessionId = useRoutineGameStore((state) => state.sessionRuntimeBySessionId);
   const stepResultsBySessionId = useRoutineGameStore((state) => state.stepResultsBySessionId);
   const dailyBuildingsByDate = useRoutineGameStore((state) => state.dailyBuildingsByDate);
+  const floorsById = useRoutineGameStore((state) => state.floorsById);
+  const dismissedRemainingRoutineIdsByDate = useRoutineGameStore((state) => state.dismissedRemainingRoutineIdsByDate);
   const surpriseQuestsById = useRoutineGameStore((state) => state.surpriseQuestsById);
+  const reviewSummariesById = useRoutineGameStore((state) => state.reviewSummariesById);
   const openRoutinePrelaunch = useRoutineGameStore((state) => state.openRoutinePrelaunch);
+  const openTodayReview = useRoutineGameStore((state) => state.openTodayReview);
   const returnToLauncher = useRoutineGameStore((state) => state.returnToLauncher);
   const openActiveSession = useRoutineGameStore((state) => state.openActiveSession);
   const startRoutineSession = useRoutineGameStore((state) => state.startRoutineSession);
@@ -839,6 +1267,10 @@ export function RoutineLauncher() {
   const completeCurrentStep = useRoutineGameStore((state) => state.completeCurrentStep);
   const skipCurrentStep = useRoutineGameStore((state) => state.skipCurrentStep);
   const dismissCompletedSession = useRoutineGameStore((state) => state.dismissCompletedSession);
+  const dismissRemainingRoutineForToday = useRoutineGameStore((state) => state.dismissRemainingRoutineForToday);
+  const confirmDayReview = useRoutineGameStore((state) => state.confirmDayReview);
+  const closeDayReview = useRoutineGameStore((state) => state.closeDayReview);
+  const setActiveView = useRoutineGameStore((state) => state.setActiveView);
 
   return (
     <RoutineLauncherContent
@@ -852,8 +1284,12 @@ export function RoutineLauncher() {
       sessionRuntimeBySessionId={sessionRuntimeBySessionId}
       stepResultsBySessionId={stepResultsBySessionId}
       dailyBuildingsByDate={dailyBuildingsByDate}
+      floorsById={floorsById}
+      dismissedRemainingRoutineIdsByDate={dismissedRemainingRoutineIdsByDate}
       surpriseQuestsById={surpriseQuestsById}
+      reviewSummariesById={reviewSummariesById}
       openRoutinePrelaunch={openRoutinePrelaunch}
+      openTodayReview={openTodayReview}
       returnToLauncher={returnToLauncher}
       openActiveSession={openActiveSession}
       startRoutineSession={startRoutineSession}
@@ -862,6 +1298,10 @@ export function RoutineLauncher() {
       completeCurrentStep={completeCurrentStep}
       skipCurrentStep={skipCurrentStep}
       dismissCompletedSession={dismissCompletedSession}
+      dismissRemainingRoutineForToday={dismissRemainingRoutineForToday}
+      confirmDayReview={confirmDayReview}
+      closeDayReview={closeDayReview}
+      setActiveView={setActiveView}
     />
   );
 }

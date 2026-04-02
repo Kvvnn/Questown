@@ -1,4 +1,5 @@
-import { toDateKey } from "./date";
+import { addDays, toDateKey } from "./date";
+import { dateKeyMinuteOfDayToDateInKst, getGameDayWindow, getWeekdayForDateKeyInKst, toGameDateKey } from "./game-day";
 import {
   ActiveStepTiming,
   LauncherSurpriseQuestPreview,
@@ -16,6 +17,7 @@ import {
   SurpriseQuest,
   TodayBuildingPreview
 } from "./game-types";
+import { isClearOrBetterGrade } from "./session-scoring";
 
 const toMinuteOfDay = (date: Date) => date.getHours() * 60 + date.getMinutes();
 
@@ -163,7 +165,7 @@ export const getTodayBuildingPreview = (
   dailyBuildingsByDate: Record<string, { floorIds: string[]; successfulSessionCount: number; roofType: TodayBuildingPreview["roofType"]; totalScore: number }>,
   now = new Date()
 ): TodayBuildingPreview => {
-  const todayBuilding = dailyBuildingsByDate[toDateKey(now)];
+  const todayBuilding = dailyBuildingsByDate[toGameDateKey(now)];
   if (!todayBuilding) {
     return {
       hasBuilding: false,
@@ -211,7 +213,7 @@ export const getLauncherSurpriseQuest = (
   surpriseQuestsById: Record<string, SurpriseQuest>,
   now = new Date()
 ): LauncherSurpriseQuestPreview => {
-  const todayDateKey = toDateKey(now);
+  const todayDateKey = toGameDateKey(now);
   const candidate = Object.values(surpriseQuestsById)
     .filter((quest) => quest.dateKey === todayDateKey && (quest.status === "accepted" || quest.status === "proposed"))
     .sort((left, right) => Number(right.status === "accepted") - Number(left.status === "accepted"))[0];
@@ -224,6 +226,62 @@ export const getLauncherSurpriseQuest = (
     hasQuest: true,
     quest: candidate
   };
+};
+
+const hasTimeTriggerSurfacedInGameDay = (triggers: RoutineTrigger[], now: Date) => {
+  const { startAt } = getGameDayWindow(now);
+  const startCalendarDateKey = toDateKey(startAt);
+  const endCalendarDateKey = toDateKey(now);
+
+  for (let cursor = startCalendarDateKey; cursor <= endCalendarDateKey; cursor = addDays(cursor, 1)) {
+    const weekday = getWeekdayForDateKeyInKst(cursor);
+
+    for (const trigger of triggers) {
+      if (trigger.triggerType !== "time" || trigger.triggerConfig.type !== "time" || !trigger.isEnabled) continue;
+      if (!trigger.triggerConfig.weekdayMask.includes(weekday)) continue;
+
+      const triggerStart = dateKeyMinuteOfDayToDateInKst(cursor, trigger.triggerConfig.startMinuteOfDay);
+      if (triggerStart >= startAt && triggerStart <= now) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+};
+
+export const getRemainingReviewRoutines = ({
+  routinesById,
+  triggersByRoutineId,
+  sessionsById,
+  dismissedRoutineIds,
+  now = new Date()
+}: {
+  routinesById: Record<string, Routine>;
+  triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  sessionsById: Record<string, RoutineSession>;
+  dismissedRoutineIds: string[];
+  now?: Date;
+}) => {
+  const todayGameDateKey = toGameDateKey(now);
+  const dismissed = new Set(dismissedRoutineIds);
+  const sessionsForToday = Object.values(sessionsById).filter((session) => session.dateKey === todayGameDateKey);
+  const startedRoutineIds = new Set(sessionsForToday.map((session) => session.routineId));
+  const successfulRoutineIds = new Set(
+    sessionsForToday.filter((session) => isClearOrBetterGrade(session.resultGrade)).map((session) => session.routineId)
+  );
+
+  return getRoutineList(routinesById).filter((routine) => {
+    if (!routine.isEnabled || dismissed.has(routine.id)) return false;
+    if (successfulRoutineIds.has(routine.id)) return false;
+
+    const hasStartedToday = startedRoutineIds.has(routine.id);
+    const surfacedByTime = hasTimeTriggerSurfacedInGameDay(triggersByRoutineId[routine.id] ?? [], now);
+    const isSurfaced = hasStartedToday || surfacedByTime;
+
+    if (!isSurfaced) return false;
+    return true;
+  });
 };
 
 export const getActiveSession = (sessionsById: Record<string, RoutineSession>, activeSessionId: string | undefined) =>

@@ -30,12 +30,13 @@ export type SuggestionType =
   | "review_commentary"
   | "tomorrow_hint";
 
-export type GameActiveView = "launcher" | "prelaunch" | "session" | "debug";
+export type GameActiveView = "launcher" | "prelaunch" | "session" | "review_gate" | "day_review" | "debug";
 
 export interface Routine {
   id: string;
   name: string;
   category: RoutineCategory;
+  sessionRole: "standard" | "day_closer";
   estimatedDurationSec: number;
   themeKey: string;
   difficulty: 1 | 2 | 3 | 4 | 5;
@@ -87,6 +88,8 @@ export interface RoutineSession {
   timeBonus: number;
   comboBonus: number;
   clearBonus: number;
+  cleanRunBonus: number;
+  firstSessionBonus: number;
   focusBonus: number;
   streakBonus: number;
   totalScore: number;
@@ -139,6 +142,33 @@ export interface SessionProgressSnapshot {
   completedSteps: number;
   skippedSteps: number;
   progressRatio: number;
+}
+
+export interface SessionScoringStepBreakdown {
+  stepResultId: string;
+  baseScore: number;
+  timeBonus: number;
+  comboBonus: number;
+  scoreEarned: number;
+}
+
+export interface SessionScoringPayload {
+  baseScore: number;
+  timeBonus: number;
+  comboBonus: number;
+  clearBonus: number;
+  cleanRunBonus: number;
+  firstSessionBonus: number;
+  focusBonus: number;
+  streakBonus: number;
+  totalScore: number;
+  coreTotalScore: number;
+  maxExpectedScore: number;
+  normalizedScore: number;
+  resultGrade: ResultGrade;
+  provisionalGrade: ResultGrade;
+  streakLengthAfterSession: number;
+  stepBreakdowns: SessionScoringStepBreakdown[];
 }
 
 export interface DailyBuilding {

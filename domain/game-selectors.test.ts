@@ -5,6 +5,7 @@ import {
   getCurrentStep,
   getLauncherHeroRoutine,
   getLauncherSurpriseQuest,
+  getRemainingReviewRoutines,
   getNextScheduledRoutine,
   getNextStepPreview,
   getRoutineStreakSummary,
@@ -44,6 +45,8 @@ describe("game selectors", () => {
       timeBonus: 0,
       comboBonus: 0,
       clearBonus: 0,
+      cleanRunBonus: 0,
+      firstSessionBonus: 0,
       focusBonus: 0,
       streakBonus: 0,
       totalScore: 0,
@@ -102,6 +105,94 @@ describe("game selectors", () => {
     });
   });
 
+  it("uses the 5AM game-day boundary for today building and surprise quest previews", () => {
+    expect(
+      getTodayBuildingPreview(
+        {
+          "2026-03-31": {
+            floorIds: ["floor-1"],
+            successfulSessionCount: 1,
+            roofType: "mid",
+            totalScore: 900
+          }
+        },
+        new Date("2026-04-01T04:59:00+09:00")
+      )
+    ).toEqual({
+      hasBuilding: true,
+      floorCount: 1,
+      successfulSessionCount: 1,
+      roofType: "mid",
+      totalScore: 900
+    });
+
+    expect(
+      getLauncherSurpriseQuest(
+        {
+          "quest-1": {
+            id: "quest-1",
+            dateKey: "2026-03-31",
+            title: "Late night stretch",
+            contextType: "night",
+            difficulty: 1,
+            rewardType: "score",
+            status: "proposed"
+          }
+        },
+        new Date("2026-04-01T04:59:00+09:00")
+      )
+    ).toEqual({
+      hasQuest: true,
+      quest: {
+        id: "quest-1",
+        dateKey: "2026-03-31",
+        title: "Late night stretch",
+        contextType: "night",
+        difficulty: 1,
+        rewardType: "score",
+        status: "proposed"
+      }
+    });
+  });
+
+  it("returns remaining review routines from surfaced but unfinished routines only", () => {
+    const seed = createDefaultRoutineSeed();
+    const routines = getRemainingReviewRoutines({
+      routinesById: seed.routinesById,
+      triggersByRoutineId: seed.triggersByRoutineId,
+      sessionsById: {
+        "session-night": {
+          id: "session-night",
+          routineId: NIGHT_ROUTINE_ID,
+          dateKey: "2026-03-31",
+          startedAt: "2026-03-31T21:00:00.000+09:00",
+          endedAt: "2026-03-31T21:20:00.000+09:00",
+          triggerSource: "time",
+          status: "reviewed",
+          resultGrade: "Great",
+          baseScore: 400,
+          timeBonus: 120,
+          comboBonus: 90,
+          clearBonus: 150,
+          cleanRunBonus: 120,
+          firstSessionBonus: 0,
+          focusBonus: 80,
+          streakBonus: 0,
+          totalScore: 960,
+          normalizedScore: 0.82,
+          completedStepCount: 5,
+          skippedStepCount: 0,
+          pausedCount: 0,
+          wasGraceApplied: false
+        }
+      },
+      dismissedRoutineIds: [],
+      now: new Date("2026-03-31T21:30:00+09:00")
+    });
+
+    expect(routines.map((routine) => routine.id)).toEqual([MORNING_ROUTINE_ID]);
+  });
+
   it("derives current step, next step, timing, and progress from session runtime", () => {
     const seed = createDefaultRoutineSeed();
     const session: RoutineSession = {
@@ -115,6 +206,8 @@ describe("game selectors", () => {
       timeBonus: 0,
       comboBonus: 0,
       clearBonus: 0,
+      cleanRunBonus: 0,
+      firstSessionBonus: 0,
       focusBonus: 0,
       streakBonus: 0,
       totalScore: 0,
