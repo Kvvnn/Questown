@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { QuestAnimationEvent } from "@/domain/animation";
 import { roofTypeLabel } from "@/domain/building";

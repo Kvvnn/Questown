@@ -1,4 +1,5 @@
-import { DailyRecord } from "./types";
+import { getDefaultLocalTimeContext, getWeekdayForDateKey, LocalTimeContext } from "./local-time";
+import { TownMonth } from "./game-types";
 
 export interface DistrictZone {
   name: string;
@@ -94,11 +95,7 @@ const weekdayMap: Record<string, number> = {
   Sat: 6
 };
 
-const getFirstWeekday = (monthKey: string) => {
-  const date = new Date(`${monthKey}-01T00:00:00+09:00`);
-  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Seoul", weekday: "short" }).format(date);
-  return weekdayMap[weekday] ?? 0;
-};
+const getFirstWeekday = (monthKey: string, timeContext: LocalTimeContext) => getWeekdayForDateKey(`${monthKey}-01`, timeContext) ?? weekdayMap.Sun;
 
 const districtForRow = (row: number) => DISTRICTS.find((zone) => row >= zone.rowStart && row <= zone.rowEnd)?.name ?? DISTRICTS[0].name;
 const getDistrictByName = (districtName: string) => DISTRICTS.find((zone) => zone.name === districtName);
@@ -211,15 +208,15 @@ export const getMonthlyMonumentTier = (monthProgress: Pick<TownMonthProgress, "c
 export const getDistrictProgress = (
   layout: TownLayout,
   districtName: string,
-  recordsByDate: Record<string, DailyRecord>,
-  weeklyMainTarget: number
+  townMonth: TownMonth
 ): DistrictProgress => {
   const district = layout.districts.find((zone) => zone.name === districtName) ?? getDistrictByName(districtName);
   const plots = layout.plots.filter((plot) => plot.district === districtName);
+  const plotSnapshotsByDate = Object.fromEntries(townMonth.plotSnapshots.map((snapshot) => [snapshot.dateKey, snapshot]));
   const activePlotCount = plots.length;
-  const completedMain = plots.reduce((sum, plot) => sum + (recordsByDate[plot.date]?.completedByType.main ?? 0), 0);
-  const totalMain = plots.reduce((sum, plot) => sum + (recordsByDate[plot.date]?.totalByType.main ?? 0), 0);
-  const targetMain = Math.ceil((weeklyMainTarget * activePlotCount) / 7);
+  const completedMain = plots.reduce((sum, plot) => sum + (plotSnapshotsByDate[plot.date]?.floorCount ?? 0), 0);
+  const totalMain = completedMain;
+  const targetMain = activePlotCount * (district?.isCore ? 2 : 1);
   const unlocked = activePlotCount > 0 && completedMain >= targetMain;
 
   return {
@@ -236,24 +233,17 @@ export const getDistrictProgress = (
 
 export const getTownMonthProgress = (
   layout: TownLayout,
-  recordsByDate: Record<string, DailyRecord>,
-  weeklyMainTarget: number
+  townMonth: TownMonth
 ): TownMonthProgress => {
   const districtProgressByName = Object.fromEntries(
     layout.districts.map((district) => [
       district.name,
-      getDistrictProgress(layout, district.name, recordsByDate, weeklyMainTarget)
+      getDistrictProgress(layout, district.name, townMonth)
     ])
   ) as Record<string, DistrictProgress>;
 
-  const monthlyMainCompleted = layout.plots.reduce(
-    (sum, plot) => sum + (recordsByDate[plot.date]?.completedByType.main ?? 0),
-    0
-  );
-  const monthlyMainTotal = layout.plots.reduce(
-    (sum, plot) => sum + (recordsByDate[plot.date]?.totalByType.main ?? 0),
-    0
-  );
+  const monthlyMainCompleted = townMonth.totalFloorCount;
+  const monthlyMainTotal = townMonth.totalFloorCount;
   const coreUnlockedCount = layout.districts.filter((district) => district.isCore && districtProgressByName[district.name]?.unlocked).length;
 
   return {
@@ -265,8 +255,12 @@ export const getTownMonthProgress = (
   };
 };
 
-export const createTownLayout = (monthKey: string, dayCount: number): TownLayout => {
-  const firstWeekday = getFirstWeekday(monthKey);
+export const createTownLayout = (
+  monthKey: string,
+  dayCount: number,
+  timeContext: LocalTimeContext = getDefaultLocalTimeContext()
+): TownLayout => {
+  const firstWeekday = getFirstWeekday(monthKey, timeContext);
 
   const plots: TownPlot[] = Array.from({ length: dayCount }, (_, index) => {
     const day = index + 1;

@@ -1,38 +1,37 @@
-import { addDays, dateKeyToDate, dateKeyToStartOfDayISOString } from "./date";
-
-const APP_UTC_OFFSET_HOURS = 9;
+import { addLocalDays, dateKeyMinuteOfDayToDate, getDefaultLocalTimeContext, getLocalDateKey, getLocalMinuteOfDay, getWeekdayForDateKey, LocalTimeContext } from "./local-time";
 export const GAME_DAY_START_HOUR = 5;
-const GAME_DAY_SHIFT_MS = (APP_UTC_OFFSET_HOURS - GAME_DAY_START_HOUR) * 60 * 60 * 1000;
+const GAME_DAY_START_MINUTE = GAME_DAY_START_HOUR * 60;
 
-const pad = (value: number) => String(value).padStart(2, "0");
+export const toGameDateKey = (date = new Date(), timeContext: LocalTimeContext = getDefaultLocalTimeContext()) => {
+  const localDateKey = getLocalDateKey(date, timeContext);
+  return getLocalMinuteOfDay(date, timeContext) < GAME_DAY_START_MINUTE ? addLocalDays(localDateKey, -1) : localDateKey;
+};
 
-const formatUtcDateKey = (date: Date) => `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+export const toGameMonthKey = (date = new Date(), timeContext: LocalTimeContext = getDefaultLocalTimeContext()) =>
+  toGameDateKey(date, timeContext).slice(0, 7);
 
-const formatUtcMonthKey = (date: Date) => `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
+export const gameDateKeyToStartDate = (dateKey: string, timeContext: LocalTimeContext = getDefaultLocalTimeContext()) =>
+  dateKeyMinuteOfDayToDate(dateKey, GAME_DAY_START_MINUTE, timeContext);
 
-export const toGameDateKey = (date = new Date()) => formatUtcDateKey(new Date(date.getTime() + GAME_DAY_SHIFT_MS));
-
-export const toGameMonthKey = (date = new Date()) => formatUtcMonthKey(new Date(date.getTime() + GAME_DAY_SHIFT_MS));
-
-export const gameDateKeyToStartDate = (dateKey: string) => new Date(dateKeyToDate(dateKey).getTime() - GAME_DAY_SHIFT_MS);
-
-export const getGameDayWindow = (date = new Date()) => {
-  const dateKey = toGameDateKey(date);
-  const startAt = gameDateKeyToStartDate(dateKey);
+export const getGameDayWindow = (date = new Date(), timeContext: LocalTimeContext = getDefaultLocalTimeContext()) => {
+  const dateKey = toGameDateKey(date, timeContext);
+  const startAt = gameDateKeyToStartDate(dateKey, timeContext);
   const endAt = new Date(startAt.getTime() + 24 * 60 * 60 * 1000);
 
   return {
     dateKey,
-    monthKey: toGameMonthKey(date),
+    monthKey: toGameMonthKey(date, timeContext),
     startAt,
     endAt,
-    nextDateKey: addDays(dateKey, 1)
+    nextDateKey: addLocalDays(dateKey, 1)
   };
 };
 
-export const getWeekdayForDateKeyInKst = (dateKey: string) => new Date(`${dateKey}T12:00:00+09:00`).getUTCDay();
+export const getWeekdayForDateKeyInLocalTime = (dateKey: string, timeContext: LocalTimeContext = getDefaultLocalTimeContext()) =>
+  getWeekdayForDateKey(dateKey, timeContext);
 
-export const dateKeyMinuteOfDayToDateInKst = (dateKey: string, minuteOfDay: number) => {
-  const localMidnight = new Date(dateKeyToStartOfDayISOString(dateKey));
-  return new Date(localMidnight.getTime() + minuteOfDay * 60 * 1000);
-};
+export const dateKeyMinuteOfDayToDateInLocalTime = (
+  dateKey: string,
+  minuteOfDay: number,
+  timeContext: LocalTimeContext = getDefaultLocalTimeContext()
+) => dateKeyMinuteOfDayToDate(dateKey, minuteOfDay, timeContext);

@@ -2,7 +2,21 @@
 
 import React from "react";
 import { getRoutineList, getSessionDraftSummary, getStartableRoutines, getStepsForRoutine } from "@/domain/game-selectors";
-import { GameActiveView, Routine, RoutineSession, RoutineStep, RoutineTrigger, SessionStepResult, DailyBuilding, Floor, SurpriseQuest, TownMonth, AiSuggestion, ReviewSummary, TriggerType } from "@/domain/game-types";
+import {
+  AiSuggestion,
+  DailyBuilding,
+  Floor,
+  GameActiveView,
+  ReviewSummary,
+  Routine,
+  RoutineSession,
+  RoutineStep,
+  RoutineStoreNotice,
+  RoutineTrigger,
+  SessionStepResult,
+  SurpriseQuest,
+  TownMonth
+} from "@/domain/game-types";
 import { StorageHealth } from "@/domain/types";
 import { Button, Card } from "@/components/ui";
 import { ROUTINE_GAME_STORAGE_NAME, useRoutineGameStore } from "@/store/routine-game-store";
@@ -67,11 +81,19 @@ export interface RoutineDevShellContentProps {
   aiSuggestionsById: Record<string, AiSuggestion>;
   reviewSummariesById: Record<string, ReviewSummary>;
   storageHealth: StorageHealth;
-  legacyResetNotice?: string;
-  clearLegacyResetNotice: () => void;
+  migrationNotice?: RoutineStoreNotice;
+  recoveryNotice?: RoutineStoreNotice;
+  clearMigrationNotice: () => void;
+  clearRecoveryNotice: () => void;
   bootstrapDefaultRoutines: () => void;
   selectRoutine: (routineId: string | undefined) => void;
-  startRoutineSession: (routineId: string, triggerSource: TriggerType) => { ok: boolean; reason?: string; sessionId?: string };
+  startRoutineSession: (launchContext: {
+    routineId: string;
+    triggerSource: "manual" | "time" | "location" | "ai_recommended";
+    triggerId?: string;
+    entrySource: "launcher_hero" | "launcher_queue" | "notification";
+    reasonKey: "time_window_active" | "time_window_upcoming" | "manual_fallback";
+  }) => { ok: boolean; reason?: string; sessionId?: string };
   setActiveView: (view: GameActiveView) => void;
   resetGameData: () => void;
 }
@@ -92,8 +114,10 @@ export function RoutineDevShellContent({
   aiSuggestionsById,
   reviewSummariesById,
   storageHealth,
-  legacyResetNotice,
-  clearLegacyResetNotice,
+  migrationNotice,
+  recoveryNotice,
+  clearMigrationNotice,
+  clearRecoveryNotice,
   bootstrapDefaultRoutines,
   selectRoutine,
   startRoutineSession,
@@ -139,14 +163,29 @@ export function RoutineDevShellContent({
         </div>
       </Card>
 
-      {legacyResetNotice ? (
+      {migrationNotice ? (
         <Card className="rounded-[24px] border border-amber-200 bg-amber-50/92 px-4 py-4 text-sm font-semibold text-amber-950 shadow-[0_16px_32px_rgba(217,119,6,0.16)]">
           <div className="flex items-start justify-between gap-3">
-            <p>{legacyResetNotice}</p>
+            <p>{migrationNotice.body}</p>
             <button
               type="button"
-              onClick={clearLegacyResetNotice}
+              onClick={clearMigrationNotice}
               className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-amber-900"
+            >
+              닫기
+            </button>
+          </div>
+        </Card>
+      ) : null}
+
+      {recoveryNotice ? (
+        <Card className="rounded-[24px] border border-sky-200 bg-sky-50/92 px-4 py-4 text-sm font-semibold text-sky-950 shadow-[0_16px_32px_rgba(14,165,233,0.16)]">
+          <div className="flex items-start justify-between gap-3">
+            <p>{recoveryNotice.body}</p>
+            <button
+              type="button"
+              onClick={clearRecoveryNotice}
+              className="rounded-full bg-white/90 px-3 py-1 text-[11px] font-black uppercase tracking-[0.2em] text-sky-900"
             >
               닫기
             </button>
@@ -249,7 +288,12 @@ export function RoutineDevShellContent({
               <Button
                 onClick={() => {
                   const triggerSource = startableByRoutineId.get(selectedRoutine.id)?.isTimeWindowActive ? "time" : "manual";
-                  startRoutineSession(selectedRoutine.id, triggerSource);
+                  startRoutineSession({
+                    routineId: selectedRoutine.id,
+                    triggerSource,
+                    entrySource: "launcher_hero",
+                    reasonKey: triggerSource === "time" ? "time_window_active" : "manual_fallback"
+                  });
                 }}
               >
                 세션 초안 생성
@@ -364,8 +408,10 @@ export function RoutineDevShell() {
   const aiSuggestionsById = useRoutineGameStore((state) => state.aiSuggestionsById);
   const reviewSummariesById = useRoutineGameStore((state) => state.reviewSummariesById);
   const storageHealth = useRoutineGameStore((state) => state.storageHealth);
-  const legacyResetNotice = useRoutineGameStore((state) => state.legacyResetNotice);
-  const clearLegacyResetNotice = useRoutineGameStore((state) => state.clearLegacyResetNotice);
+  const migrationNotice = useRoutineGameStore((state) => state.migrationNotice);
+  const recoveryNotice = useRoutineGameStore((state) => state.recoveryNotice);
+  const clearMigrationNotice = useRoutineGameStore((state) => state.clearMigrationNotice);
+  const clearRecoveryNotice = useRoutineGameStore((state) => state.clearRecoveryNotice);
   const bootstrapDefaultRoutines = useRoutineGameStore((state) => state.bootstrapDefaultRoutines);
   const selectRoutine = useRoutineGameStore((state) => state.selectRoutine);
   const startRoutineSession = useRoutineGameStore((state) => state.startRoutineSession);
@@ -389,8 +435,10 @@ export function RoutineDevShell() {
       aiSuggestionsById={aiSuggestionsById}
       reviewSummariesById={reviewSummariesById}
       storageHealth={storageHealth}
-      legacyResetNotice={legacyResetNotice}
-      clearLegacyResetNotice={clearLegacyResetNotice}
+      migrationNotice={migrationNotice}
+      recoveryNotice={recoveryNotice}
+      clearMigrationNotice={clearMigrationNotice}
+      clearRecoveryNotice={clearRecoveryNotice}
       bootstrapDefaultRoutines={bootstrapDefaultRoutines}
       selectRoutine={selectRoutine}
       startRoutineSession={startRoutineSession}

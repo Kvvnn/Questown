@@ -15,15 +15,15 @@ describe("town selection helpers", () => {
     expect(
       resolveSelectedTownDate("2026-02", "2026-03-25", "2026-02-14", {
         "2026-02-03": {
-          date: "2026-02-03",
-          quests: [],
-          completedCount: 0,
-          totalCount: 0,
-          completionRate: 0,
+          dateKey: "2026-02-03",
+          sessionIds: [],
+          floorIds: [],
           roofType: "none",
-          isFinalized: false,
-          completedByType: { daily: 0, main: 0, sub: 0 },
-          totalByType: { daily: 0, main: 0, sub: 0 }
+          ornamentIds: [],
+          totalScore: 0,
+          successfulSessionCount: 0,
+          averageNormalizedScore: 0,
+          streakSnapshot: {}
         }
       })
     ).toBe("2026-02-14");

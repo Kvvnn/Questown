@@ -23,14 +23,19 @@ export type SurpriseQuestStatus = "proposed" | "accepted" | "completed" | "skipp
 
 export type SuggestionType =
   | "routine_recommendation"
-  | "routine_template"
   | "duration_tune"
-  | "trigger_tune"
   | "surprise_quest"
-  | "review_commentary"
-  | "tomorrow_hint";
+  | "review_commentary";
 
-export type GameActiveView = "launcher" | "prelaunch" | "session" | "review_gate" | "day_review" | "debug";
+export type AiSuggestionStatus = "pending" | "applied" | "dismissed" | "expired";
+
+export type AiSuggestionSource = "ai" | "fallback";
+
+export type GameActiveView = "launcher" | "prelaunch" | "session" | "review_gate" | "day_review" | "town" | "manage" | "debug";
+
+export type LaunchEntrySource = "launcher_hero" | "launcher_queue" | "notification";
+
+export type LaunchReasonKey = "time_window_active" | "time_window_upcoming" | "manual_fallback";
 
 export interface Routine {
   id: string;
@@ -225,17 +230,55 @@ export interface TownMonth {
   generatedAt: string;
 }
 
+export interface RoutineRecommendationSuggestionPayload {
+  kind: "routine_recommendation";
+  routineId: string;
+  launchContext: RoutineLaunchContext;
+  directorNote: string;
+}
+
+export interface DurationTuneSuggestionPayload {
+  kind: "duration_tune";
+  routineId: string;
+  stepId: string;
+  stepTitle: string;
+  currentDurationSec: number;
+  proposedDurationSec: number;
+  deltaSec: number;
+  frictionSignals: Array<"overtime" | "pause" | "grace">;
+}
+
+export interface SurpriseQuestSuggestionPayload {
+  kind: "surprise_quest";
+  questId: string;
+  quest: SurpriseQuest;
+}
+
+export interface ReviewCommentarySuggestionPayload {
+  kind: "review_commentary";
+  summary: ReviewSummary;
+}
+
+export type AiSuggestionPayload =
+  | RoutineRecommendationSuggestionPayload
+  | DurationTuneSuggestionPayload
+  | SurpriseQuestSuggestionPayload
+  | ReviewCommentarySuggestionPayload;
+
 export interface AiSuggestion {
   id: string;
   type: SuggestionType;
   targetDateKey?: string;
   targetRoutineId?: string;
+  targetSessionId?: string;
   generatedAt: string;
   reasoningSummary: string;
   confidence: number;
-  applied: boolean;
+  status: AiSuggestionStatus;
+  source: AiSuggestionSource;
+  resolvedAt?: string;
   expiresAt?: string;
-  payload: Record<string, unknown>;
+  payload: AiSuggestionPayload;
 }
 
 export interface ReviewSummary {
@@ -248,6 +291,100 @@ export interface ReviewSummary {
   frictionPoints: string[];
   tomorrowHints: string[];
   source: "ai" | "fallback";
+  sourceSuggestionId?: string;
+}
+
+export type RoutineImportSourceKind = "legacy_local_storage" | "legacy_backup" | "routine_backup";
+
+export interface RoutineStoreNotice {
+  title: string;
+  body: string;
+  tone: "info" | "success" | "warning" | "error";
+}
+
+export interface RoutineMigrationMeta {
+  sourceKind: RoutineImportSourceKind;
+  sourceFingerprint: string;
+  importedAt: string;
+  importedDateCount: number;
+  importedCompletedQuestCount: number;
+  unmappedQuestCount: number;
+  warningCount: number;
+  latestExportedAt?: string;
+}
+
+export interface RoutineBackupState {
+  activeView: GameActiveView;
+  selectedRoutineId?: string;
+  activeSessionId?: string;
+  hasBootstrappedDefaults: boolean;
+  routinesById: Record<string, Routine>;
+  stepsByRoutineId: Record<string, RoutineStep[]>;
+  triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  sessionsById: Record<string, RoutineSession>;
+  sessionRuntimeBySessionId: Record<string, SessionRuntime>;
+  stepResultsBySessionId: Record<string, SessionStepResult[]>;
+  dailyBuildingsByDate: Record<string, DailyBuilding>;
+  floorsById: Record<string, Floor>;
+  dismissedRemainingRoutineIdsByDate: Record<string, string[]>;
+  surpriseQuestsById: Record<string, SurpriseQuest>;
+  aiSuggestionsById: Record<string, AiSuggestion>;
+  reviewSummariesById: Record<string, ReviewSummary>;
+  migrationMetaBySourceFingerprint: Record<string, RoutineMigrationMeta>;
+}
+
+export interface RoutineBackupData {
+  version: number;
+  exportedAt: string;
+  state: RoutineBackupState;
+}
+
+export interface RoutineBackupImportPreview {
+  sourceKind: RoutineImportSourceKind;
+  version: number;
+  exportedAt: string;
+  dateCount: number;
+  earliestDate?: string;
+  latestDate?: string;
+  overwriteDateCount: number;
+  newDateCount: number;
+  hasRepairWarning: boolean;
+  repairSummary?: string;
+  alreadyImported: boolean;
+  unmappedLegacyQuestCount: number;
+  unmappedLegacyQuestTitles: string[];
+  state: RoutineBackupState;
+  migrationMeta: RoutineMigrationMeta;
+}
+
+export type RoutineAnalyticsEventType =
+  | "session_completed"
+  | "day_review_finalized"
+  | "surprise_quest_completed"
+  | "ai_suggestion_resolved"
+  | "backup_import_applied";
+
+export interface RoutineAnalyticsEvent {
+  id: string;
+  type: RoutineAnalyticsEventType;
+  occurredAt: string;
+  dateKey?: string;
+  routineId?: string;
+  suggestionId?: string;
+  suggestionSource?: AiSuggestionSource;
+  title: string;
+  body: string;
+}
+
+export interface RoutineAnalyticsSnapshot {
+  completedSessionsLast7: number;
+  clearRateLast14: number;
+  finalizedReviewRateLast14: number;
+  totalFloors: number;
+  currentMonthFloorCount: number;
+  surpriseQuestCompletionRate: number;
+  aiSuggestionAcceptanceRate: number;
+  fallbackSuggestionResolutionCount: number;
 }
 
 export interface StartableRoutineCandidate {
@@ -261,6 +398,46 @@ export interface NextScheduledRoutineCandidate {
   routine: Routine;
   trigger: RoutineTrigger;
   scheduledAt: string;
+}
+
+export interface RoutineLaunchContext {
+  routineId: string;
+  triggerSource: TriggerType;
+  triggerId?: string;
+  entrySource: LaunchEntrySource;
+  reasonKey: LaunchReasonKey;
+}
+
+export interface RoutineRecommendationItem {
+  routine: Routine;
+  trigger?: RoutineTrigger;
+  launchContext: RoutineLaunchContext;
+  reasonCopy: string;
+  scheduledAt?: string;
+  triggerWindowStartAt?: string;
+  triggerWindowEndAt?: string;
+  notificationWindowKey?: string;
+}
+
+export interface RoutineLaunchAvailability {
+  canStartNow: boolean;
+  blockedReason?: string;
+  windowState: "manual" | "active" | "upcoming" | "closed" | "invalid";
+}
+
+export interface RoutineNotificationCandidate {
+  title: string;
+  body: string;
+  launchContext: RoutineLaunchContext;
+  notificationWindowKey: string;
+  triggerWindowStartAt: string;
+  triggerWindowEndAt: string;
+}
+
+export interface TriggerEvaluationResult {
+  primaryRecommendation: RoutineRecommendationItem | null;
+  upcomingRecommendations: RoutineRecommendationItem[];
+  notificationCandidate: RoutineNotificationCandidate | null;
 }
 
 export interface SessionDraftSummary {

@@ -1,5 +1,6 @@
 import { getNextScheduledRoutine } from "./game-selectors";
 import { getGameDayWindow, gameDateKeyToStartDate } from "./game-day";
+import { getDefaultLocalTimeContext, LocalTimeContext } from "./local-time";
 import { isClearOrBetterGrade } from "./session-scoring";
 import { DailyBuilding, ReviewSummary, RoofType, Routine, RoutineSession, RoutineStep, RoutineTrigger, SessionStepResult } from "./game-types";
 
@@ -38,20 +39,23 @@ const roofHeadline: Record<RoofType, string> = {
 const formatTomorrowHint = ({
   dateKey,
   routinesById,
-  triggersByRoutineId
+  triggersByRoutineId,
+  timeContext = getDefaultLocalTimeContext()
 }: {
   dateKey: string;
   routinesById: Record<string, Routine>;
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  timeContext?: LocalTimeContext;
 }) => {
-  const currentGameDateStart = gameDateKeyToStartDate(dateKey);
-  const currentGameWindow = getGameDayWindow(new Date(currentGameDateStart.getTime() + 1));
+  const currentGameDateStart = gameDateKeyToStartDate(dateKey, timeContext);
+  const currentGameWindow = getGameDayWindow(new Date(currentGameDateStart.getTime() + 1), timeContext);
   const nextScheduled = getNextScheduledRoutine(
     routinesById,
     triggersByRoutineId,
     undefined,
     new Date(currentGameWindow.endAt.getTime() - 1),
-    2
+    2,
+    timeContext
   );
 
   if (!nextScheduled) return [];
@@ -98,7 +102,8 @@ export const buildFallbackReviewSummary = ({
   stepsByRoutineId,
   triggersByRoutineId,
   dismissedRemainingRoutineIds,
-  now = new Date()
+  now = new Date(),
+  timeContext = getDefaultLocalTimeContext()
 }: {
   dateKey: string;
   building: DailyBuilding;
@@ -109,6 +114,7 @@ export const buildFallbackReviewSummary = ({
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
   dismissedRemainingRoutineIds: string[];
   now?: Date;
+  timeContext?: LocalTimeContext;
 }): ReviewSummary => {
   const successfulSessions = getSuccessfulSessionsForDate(sessionsById, dateKey);
   const partialSessions = getPartialSessionsForDate(sessionsById, dateKey);
@@ -128,7 +134,8 @@ export const buildFallbackReviewSummary = ({
   const tomorrowHints = formatTomorrowHint({
     dateKey,
     routinesById,
-    triggersByRoutineId
+    triggersByRoutineId,
+    timeContext
   });
 
   return {
@@ -153,7 +160,9 @@ export const finalizeDayReview = ({
   stepsByRoutineId,
   triggersByRoutineId,
   dismissedRemainingRoutineIds,
-  now = new Date()
+  reviewSummary,
+  now = new Date(),
+  timeContext = getDefaultLocalTimeContext()
 }: {
   dateKey: string;
   building: DailyBuilding;
@@ -163,7 +172,9 @@ export const finalizeDayReview = ({
   stepsByRoutineId: Record<string, RoutineStep[]>;
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
   dismissedRemainingRoutineIds: string[];
+  reviewSummary?: ReviewSummary;
   now?: Date;
+  timeContext?: LocalTimeContext;
 }) => {
   const successfulSessions = getSuccessfulSessionsForDate(sessionsById, dateKey);
   const roofType = computeDailyRoofType({
@@ -171,25 +182,28 @@ export const finalizeDayReview = ({
     stepResultsBySessionId,
     stepsByRoutineId
   });
-  const reviewSummary = buildFallbackReviewSummary({
-    dateKey,
-    building,
-    sessionsById,
-    routinesById,
-    stepResultsBySessionId,
-    stepsByRoutineId,
-    triggersByRoutineId,
-    dismissedRemainingRoutineIds,
-    now
-  });
+  const nextReviewSummary =
+    reviewSummary ??
+    buildFallbackReviewSummary({
+      dateKey,
+      building,
+      sessionsById,
+      routinesById,
+      stepResultsBySessionId,
+      stepsByRoutineId,
+      triggersByRoutineId,
+      dismissedRemainingRoutineIds,
+      now,
+      timeContext
+    });
 
   return {
     building: {
       ...building,
       roofType,
-      reviewSummaryId: reviewSummary.id,
+      reviewSummaryId: nextReviewSummary.id,
       finalizedAt: now.toISOString()
     },
-    reviewSummary
+    reviewSummary: nextReviewSummary
   };
 };

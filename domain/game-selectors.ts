@@ -1,5 +1,5 @@
 import { addDays, toDateKey } from "./date";
-import { dateKeyMinuteOfDayToDateInKst, getGameDayWindow, getWeekdayForDateKeyInKst, toGameDateKey } from "./game-day";
+import { dateKeyMinuteOfDayToDateInLocalTime, getGameDayWindow, getWeekdayForDateKeyInLocalTime, toGameDateKey } from "./game-day";
 import {
   ActiveStepTiming,
   LauncherSurpriseQuestPreview,
@@ -17,6 +17,8 @@ import {
   SurpriseQuest,
   TodayBuildingPreview
 } from "./game-types";
+import { getActiveTimeTriggerWindow, getNextTimeTriggerWindow } from "./routine-trigger-evaluator";
+import { getDefaultLocalTimeContext, LocalTimeContext } from "./local-time";
 import { isClearOrBetterGrade } from "./session-scoring";
 
 const toMinuteOfDay = (date: Date) => date.getHours() * 60 + date.getMinutes();
@@ -41,21 +43,10 @@ const getElapsedMsFromRuntime = (runtime: SessionRuntime, now: Date) => {
   return Math.max(0, referenceTime - stepStartedAt - runtime.accumulatedPauseMs);
 };
 
-const matchesTimeWindow = (trigger: RoutineTrigger, now: Date) => {
+const matchesTimeWindow = (trigger: RoutineTrigger, now: Date, timeContext: LocalTimeContext) => {
   if (trigger.triggerType !== "time" || trigger.triggerConfig.type !== "time") return false;
   if (!trigger.isEnabled) return false;
-
-  const weekday = now.getDay();
-  if (!trigger.triggerConfig.weekdayMask.includes(weekday)) return false;
-
-  const minuteOfDay = toMinuteOfDay(now);
-  const { startMinuteOfDay, endMinuteOfDay } = trigger.triggerConfig;
-
-  if (startMinuteOfDay <= endMinuteOfDay) {
-    return minuteOfDay >= startMinuteOfDay && minuteOfDay <= endMinuteOfDay;
-  }
-
-  return minuteOfDay >= startMinuteOfDay || minuteOfDay <= endMinuteOfDay;
+  return !!getActiveTimeTriggerWindow({ trigger, now, timeContext });
 };
 
 export const getRoutineList = (routinesById: Record<string, Routine>) =>
@@ -70,7 +61,8 @@ export const getStepsForRoutine = (stepsByRoutineId: Record<string, RoutineStep[
 export const getStartableRoutines = (
   routinesById: Record<string, Routine>,
   triggersByRoutineId: Record<string, RoutineTrigger[]>,
-  now = new Date()
+  now = new Date(),
+  timeContext: LocalTimeContext = getDefaultLocalTimeContext()
 ): StartableRoutineCandidate[] =>
   getRoutineList(routinesById)
     .filter((routine) => routine.isEnabled)
@@ -79,7 +71,7 @@ export const getStartableRoutines = (
       const matchedTriggers = triggers.filter((trigger) => {
         if (!trigger.isEnabled) return false;
         if (trigger.triggerType === "manual" && trigger.triggerConfig.type === "manual") return true;
-        return matchesTimeWindow(trigger, now);
+        return matchesTimeWindow(trigger, now, timeContext);
       });
 
       return {
@@ -95,35 +87,17 @@ export const getStartableRoutines = (
 export const getLauncherHeroRoutine = (
   routinesById: Record<string, Routine>,
   triggersByRoutineId: Record<string, RoutineTrigger[]>,
-  now = new Date()
-) => getStartableRoutines(routinesById, triggersByRoutineId, now)[0] ?? null;
-
-const getNextTimeTriggerStart = (trigger: RoutineTrigger, now: Date, horizonDays: number) => {
-  if (trigger.triggerType !== "time" || trigger.triggerConfig.type !== "time") return null;
-  if (!trigger.isEnabled) return null;
-
-  for (let offset = 0; offset < horizonDays; offset += 1) {
-    const candidateDate = new Date(now);
-    candidateDate.setHours(0, 0, 0, 0);
-    candidateDate.setDate(candidateDate.getDate() + offset);
-
-    if (!trigger.triggerConfig.weekdayMask.includes(candidateDate.getDay())) continue;
-
-    const start = buildDateAtMinuteOfDay(candidateDate, trigger.triggerConfig.startMinuteOfDay);
-    if (start <= now) continue;
-
-    return start;
-  }
-
-  return null;
-};
+  now = new Date(),
+  timeContext: LocalTimeContext = getDefaultLocalTimeContext()
+) => getStartableRoutines(routinesById, triggersByRoutineId, now, timeContext)[0] ?? null;
 
 export const getNextScheduledRoutine = (
   routinesById: Record<string, Routine>,
   triggersByRoutineId: Record<string, RoutineTrigger[]>,
   excludedRoutineId: string | undefined,
   now = new Date(),
-  horizonDays = 7
+  horizonDays = 7,
+  timeContext: LocalTimeContext = getDefaultLocalTimeContext()
 ): NextScheduledRoutineCandidate | null => {
   let best: NextScheduledRoutineCandidate | null = null;
 
@@ -133,13 +107,13 @@ export const getNextScheduledRoutine = (
       const triggers = triggersByRoutineId[routine.id] ?? [];
 
       triggers.forEach((trigger) => {
-        const nextStart = getNextTimeTriggerStart(trigger, now, horizonDays);
-        if (!nextStart) return;
+        const nextWindow = getNextTimeTriggerWindow({ trigger, now, timeContext, horizonDays });
+        if (!nextWindow) return;
 
         const candidate: NextScheduledRoutineCandidate = {
           routine,
           trigger,
-          scheduledAt: nextStart.toISOString()
+          scheduledAt: nextWindow.startAt
         };
 
         if (!best) {
@@ -214,9 +188,16 @@ export const getLauncherSurpriseQuest = (
   now = new Date()
 ): LauncherSurpriseQuestPreview => {
   const todayDateKey = toGameDateKey(now);
+  const questRank: Record<SurpriseQuest["status"], number> = {
+    accepted: 4,
+    proposed: 3,
+    completed: 2,
+    skipped: 1,
+    expired: 0
+  };
   const candidate = Object.values(surpriseQuestsById)
-    .filter((quest) => quest.dateKey === todayDateKey && (quest.status === "accepted" || quest.status === "proposed"))
-    .sort((left, right) => Number(right.status === "accepted") - Number(left.status === "accepted"))[0];
+    .filter((quest) => quest.dateKey === todayDateKey && quest.status !== "expired")
+    .sort((left, right) => questRank[right.status] - questRank[left.status])[0];
 
   if (!candidate) {
     return { hasQuest: false };
@@ -228,19 +209,23 @@ export const getLauncherSurpriseQuest = (
   };
 };
 
-const hasTimeTriggerSurfacedInGameDay = (triggers: RoutineTrigger[], now: Date) => {
-  const { startAt } = getGameDayWindow(now);
+const hasTimeTriggerSurfacedInGameDay = (
+  triggers: RoutineTrigger[],
+  now: Date,
+  timeContext: LocalTimeContext = getDefaultLocalTimeContext()
+) => {
+  const { startAt } = getGameDayWindow(now, timeContext);
   const startCalendarDateKey = toDateKey(startAt);
   const endCalendarDateKey = toDateKey(now);
 
   for (let cursor = startCalendarDateKey; cursor <= endCalendarDateKey; cursor = addDays(cursor, 1)) {
-    const weekday = getWeekdayForDateKeyInKst(cursor);
+    const weekday = getWeekdayForDateKeyInLocalTime(cursor, timeContext);
 
     for (const trigger of triggers) {
       if (trigger.triggerType !== "time" || trigger.triggerConfig.type !== "time" || !trigger.isEnabled) continue;
       if (!trigger.triggerConfig.weekdayMask.includes(weekday)) continue;
 
-      const triggerStart = dateKeyMinuteOfDayToDateInKst(cursor, trigger.triggerConfig.startMinuteOfDay);
+      const triggerStart = dateKeyMinuteOfDayToDateInLocalTime(cursor, trigger.triggerConfig.startMinuteOfDay, timeContext);
       if (triggerStart >= startAt && triggerStart <= now) {
         return true;
       }
@@ -255,15 +240,17 @@ export const getRemainingReviewRoutines = ({
   triggersByRoutineId,
   sessionsById,
   dismissedRoutineIds,
-  now = new Date()
+  now = new Date(),
+  timeContext = getDefaultLocalTimeContext()
 }: {
   routinesById: Record<string, Routine>;
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
   sessionsById: Record<string, RoutineSession>;
   dismissedRoutineIds: string[];
   now?: Date;
+  timeContext?: LocalTimeContext;
 }) => {
-  const todayGameDateKey = toGameDateKey(now);
+  const todayGameDateKey = toGameDateKey(now, timeContext);
   const dismissed = new Set(dismissedRoutineIds);
   const sessionsForToday = Object.values(sessionsById).filter((session) => session.dateKey === todayGameDateKey);
   const startedRoutineIds = new Set(sessionsForToday.map((session) => session.routineId));
@@ -276,7 +263,7 @@ export const getRemainingReviewRoutines = ({
     if (successfulRoutineIds.has(routine.id)) return false;
 
     const hasStartedToday = startedRoutineIds.has(routine.id);
-    const surfacedByTime = hasTimeTriggerSurfacedInGameDay(triggersByRoutineId[routine.id] ?? [], now);
+    const surfacedByTime = hasTimeTriggerSurfacedInGameDay(triggersByRoutineId[routine.id] ?? [], now, timeContext);
     const isSurfaced = hasStartedToday || surfacedByTime;
 
     if (!isSurfaced) return false;

@@ -1,28 +1,41 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { MonthlyTownView } from "@/components/monthly-town-view";
+import { RoutineManageView } from "@/components/routine-manage-view";
+import {
+  getLauncherRoutineSuggestion,
+  getPendingDurationTuneSuggestion,
+  getReviewCommentarySuggestion,
+  getSuggestionConfidenceLabel
+} from "@/domain/ai-suggestion-selectors";
 import { buildFallbackReviewSummary, computeDailyRoofType } from "@/domain/day-review";
+import { getDaysInMonth } from "@/domain/date";
 import { getFloorQualityLabel, getRoofBadgeClassName, getRoofLabel } from "@/domain/game-building";
 import { toGameDateKey } from "@/domain/game-day";
 import {
   getActiveSession,
   getActiveStepTiming,
   getCurrentStep,
-  getLauncherHeroRoutine,
   getLauncherSurpriseQuest,
   getRemainingReviewRoutines,
   getNextStepPreview,
-  getNextScheduledRoutine,
-  getRoutineStreakSummary,
   getSessionProgress,
   getStepsForRoutine,
   getTodayBuildingPreview
 } from "@/domain/game-selectors";
+import { getRoutineLaunchAvailability, getTriggerEvaluatorResult } from "@/domain/routine-trigger-evaluator";
 import {
+  AiSuggestion,
   DailyBuilding,
   Floor,
   GameActiveView,
-  NextScheduledRoutineCandidate,
+  RoutineBackupData,
+  RoutineBackupImportPreview,
+  RoutineLaunchContext,
+  RoutineMigrationMeta,
+  RoutineRecommendationItem,
+  RoutineStoreNotice,
   ReviewSummary,
   Routine,
   RoutineSession,
@@ -30,10 +43,14 @@ import {
   RoutineStep,
   RoutineTrigger,
   SessionStepResult,
-  SurpriseQuest
+  SurpriseQuest,
+  TownMonth
 } from "@/domain/game-types";
 import { getFallbackResultCommentary, RESULT_LOOP_AUTO_DISMISS_MS, shouldShowResultLoop } from "@/domain/result-loop";
+import { buildTownMonthSnapshot } from "@/domain/town-month";
+import { createTownLayout, getTownMonthProgress } from "@/domain/town-map";
 import { Button, Card } from "@/components/ui";
+import { StorageHealth } from "@/domain/types";
 import { useRoutineGameStore } from "@/store/routine-game-store";
 
 const formatDuration = (seconds: number) => {
@@ -109,13 +126,31 @@ const formatTimerValue = (totalMs: number, { overtime = false }: { overtime?: bo
   return `${overtime ? "+" : ""}${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 };
 
+const buildManualLaunchContext = (
+  routineId: string,
+  entrySource: RoutineLaunchContext["entrySource"] = "launcher_hero"
+): RoutineLaunchContext => ({
+  routineId,
+  triggerSource: "manual",
+  entrySource,
+  reasonKey: "manual_fallback"
+});
+
 const ZeroStateNote = ({ children }: { children: React.ReactNode }) => (
   <p className="mt-2 text-sm leading-6 text-slate-500">{children}</p>
 );
 
+const townSeasonSummary: Record<TownMonth["seasonTheme"], string> = {
+  spring: "봄 테마",
+  summer: "여름 테마",
+  autumn: "가을 테마",
+  winter: "겨울 테마"
+};
+
 export interface RoutineLauncherContentProps {
   activeView: GameActiveView;
   selectedRoutineId?: string;
+  selectedLaunchContext?: RoutineLaunchContext;
   activeSessionId?: string;
   routinesById: Record<string, Routine>;
   stepsByRoutineId: Record<string, RoutineStep[]>;
@@ -127,75 +162,155 @@ export interface RoutineLauncherContentProps {
   floorsById: Record<string, Floor>;
   dismissedRemainingRoutineIdsByDate: Record<string, string[]>;
   surpriseQuestsById: Record<string, SurpriseQuest>;
+  townMonthsByKey: Record<string, TownMonth>;
+  aiSuggestionsById: Record<string, AiSuggestion>;
   reviewSummariesById: Record<string, ReviewSummary>;
-  openRoutinePrelaunch: (routineId: string) => void;
+  migrationMetaBySourceFingerprint: Record<string, RoutineMigrationMeta>;
+  selectedTownMonthKey?: string;
+  selectedTownDateKey?: string;
+  notificationPermission: NotificationPermission | "unsupported";
+  storageHealth: StorageHealth;
+  migrationNotice?: RoutineStoreNotice;
+  recoveryNotice?: RoutineStoreNotice;
+  openRoutinePrelaunch: (launchContext: RoutineLaunchContext, sourceSuggestionId?: string) => void;
   openTodayReview: () => void;
+  openTownView: () => void;
+  closeTownView: () => void;
+  openManageView: () => void;
+  closeManageView: () => void;
   returnToLauncher: () => void;
   openActiveSession: () => void;
-  startRoutineSession: (routineId: string, triggerSource: "manual" | "time" | "location" | "ai_recommended") => {
+  selectTownMonth: (monthKey: string) => void;
+  selectTownDate: (dateKey: string) => void;
+  ensureTownMonthSnapshot: (monthKey?: string) => TownMonth | undefined;
+  startRoutineSession: (launchContext: RoutineLaunchContext) => {
     ok: boolean;
     reason?: string;
     sessionId?: string;
   };
+  requestNotificationPermission: () => Promise<NotificationPermission | "unsupported">;
   pauseActiveSession: () => { ok: boolean; reason?: string };
   resumeActiveSession: () => { ok: boolean; reason?: string };
   completeCurrentStep: () => { ok: boolean; reason?: string; completedSession?: boolean };
   skipCurrentStep: () => { ok: boolean; reason?: string; completedSession?: boolean };
   dismissCompletedSession: () => void;
+  requestLauncherSuggestions: () => Promise<void>;
+  requestDurationSuggestion: (sessionId: string) => Promise<void>;
+  requestReviewSuggestion: (dateKey?: string) => Promise<void>;
+  applyAiSuggestion: (suggestionId: string) => { ok: boolean; reason?: string };
+  dismissAiSuggestion: (suggestionId: string) => { ok: boolean; reason?: string };
+  acceptSurpriseQuest: (questId: string) => { ok: boolean; reason?: string };
+  completeSurpriseQuest: (questId: string) => { ok: boolean; reason?: string };
+  skipSurpriseQuest: (questId: string) => { ok: boolean; reason?: string };
   dismissRemainingRoutineForToday: (routineId: string) => void;
   confirmDayReview: () => { ok: boolean; reason?: string };
   closeDayReview: () => void;
+  exportBackup: () => RoutineBackupData;
+  previewBackupImport: (data: unknown) => { ok: true; preview: RoutineBackupImportPreview } | { ok: false; reason: string };
+  applyBackupImport: (preview: RoutineBackupImportPreview) => { ok: boolean; reason?: string };
+  clearRecoveryNotice: () => void;
+  clearMigrationNotice: () => void;
   setActiveView: (view: GameActiveView) => void;
   now?: Date;
 }
 
 function LauncherHome({
-  heroRoutineId,
-  heroReason,
-  nextScheduled,
+  primaryRecommendation,
+  upcomingRecommendations,
   routinesById,
   stepsByRoutineId,
   dailyBuildingsByDate,
+  floorsById,
   surpriseQuestsById,
+  townMonthsByKey,
+  aiSuggestionsById,
+  migrationMetaBySourceFingerprint,
   sessionsById,
   activeSessionId,
-  triggersByRoutineId,
+  notificationPermission,
+  storageHealth,
   openTodayReview,
+  openTownView,
+  openManageView,
   openRoutinePrelaunch,
   openActiveSession,
+  requestNotificationPermission,
+  requestLauncherSuggestions,
+  dismissAiSuggestion,
+  acceptSurpriseQuest,
+  completeSurpriseQuest,
+  skipSurpriseQuest,
+  launcherAiSuggestion,
   now
 }: {
-  heroRoutineId?: string;
-  heroReason?: string;
-  nextScheduled: NextScheduledRoutineCandidate | null;
+  primaryRecommendation: RoutineRecommendationItem | null;
+  upcomingRecommendations: RoutineRecommendationItem[];
   routinesById: Record<string, Routine>;
   stepsByRoutineId: Record<string, RoutineStep[]>;
   dailyBuildingsByDate: Record<string, DailyBuilding>;
+  floorsById: Record<string, Floor>;
   surpriseQuestsById: Record<string, SurpriseQuest>;
+  townMonthsByKey: Record<string, TownMonth>;
+  aiSuggestionsById: Record<string, AiSuggestion>;
+  migrationMetaBySourceFingerprint: Record<string, RoutineMigrationMeta>;
   sessionsById: Record<string, RoutineSession>;
   activeSessionId?: string;
-  triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  notificationPermission: NotificationPermission | "unsupported";
+  storageHealth: StorageHealth;
   openTodayReview: () => void;
-  openRoutinePrelaunch: (routineId: string) => void;
+  openTownView: () => void;
+  openManageView: () => void;
+  openRoutinePrelaunch: (launchContext: RoutineLaunchContext, sourceSuggestionId?: string) => void;
   openActiveSession: () => void;
+  requestNotificationPermission: () => Promise<NotificationPermission | "unsupported">;
+  requestLauncherSuggestions: () => Promise<void>;
+  dismissAiSuggestion: (suggestionId: string) => { ok: boolean; reason?: string };
+  acceptSurpriseQuest: (questId: string) => { ok: boolean; reason?: string };
+  completeSurpriseQuest: (questId: string) => { ok: boolean; reason?: string };
+  skipSurpriseQuest: (questId: string) => { ok: boolean; reason?: string };
+  launcherAiSuggestion?: AiSuggestion;
   now: Date;
 }) {
+  const [isSecondaryOpen, setIsSecondaryOpen] = useState(false);
   const activeSession = getActiveSession(sessionsById, activeSessionId);
   const activeRoutine = activeSession ? routinesById[activeSession.routineId] : undefined;
-  const heroRoutine = heroRoutineId ? routinesById[heroRoutineId] : undefined;
+  const heroRoutine = primaryRecommendation?.routine;
   const heroSteps = heroRoutine ? stepsByRoutineId[heroRoutine.id] ?? [] : [];
   const currentGameDateKey = toGameDateKey(now);
-  const currentBuilding = dailyBuildingsByDate[currentGameDateKey];
+  const currentTownMonthKey = currentGameDateKey.slice(0, 7);
   const todayBuildingPreview = getTodayBuildingPreview(dailyBuildingsByDate, now);
-  const streakSummary = getRoutineStreakSummary(dailyBuildingsByDate, routinesById);
   const surpriseQuest = getLauncherSurpriseQuest(surpriseQuestsById, now);
+  const surpriseQuestSuggestion =
+    surpriseQuest.quest?.sourceSuggestionId && aiSuggestionsById[surpriseQuest.quest.sourceSuggestionId]
+      ? aiSuggestionsById[surpriseQuest.quest.sourceSuggestionId]
+      : undefined;
+  const currentTownMonth =
+    townMonthsByKey[currentTownMonthKey] ??
+    buildTownMonthSnapshot({
+      monthKey: currentTownMonthKey,
+      dailyBuildingsByDate,
+      floorsById,
+      surpriseQuestsById,
+      currentGameDateKey
+    });
+  const currentTownLayout = createTownLayout(currentTownMonthKey, getDaysInMonth(currentTownMonthKey));
+  const currentTownProgress = getTownMonthProgress(currentTownLayout, currentTownMonth);
+  const migrationCount = Object.keys(migrationMetaBySourceFingerprint).length;
+  const hasSecondaryContent =
+    upcomingRecommendations.length > 0 ||
+    surpriseQuest.hasQuest ||
+    notificationPermission === "default" ||
+    notificationPermission === "denied";
+
+  useEffect(() => {
+    void requestLauncherSuggestions();
+  }, [currentGameDateKey, requestLauncherSuggestions]);
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto pb-2">
       <Card className="rounded-[30px] border border-slate-200/70 bg-white/92 px-5 py-5 shadow-[0_20px_48px_rgba(15,23,42,0.12)]">
         <p className="text-xs font-black uppercase tracking-[0.26em] text-sky-500">Questown Launcher</p>
         <h1 className="mt-2 text-2xl font-black tracking-[-0.03em] text-slate-950">지금 시작 가능한 한 판만 보여줍니다.</h1>
-        <p className="mt-2 text-sm leading-6 text-slate-500">목록을 읽는 대신, 바로 시작하거나 이어서 플레이할 루틴만 남깁니다.</p>
       </Card>
 
       <Card className="rounded-[32px] border border-slate-900/5 bg-slate-950 px-5 py-5 text-white shadow-[0_24px_56px_rgba(15,23,42,0.28)]">
@@ -203,10 +318,8 @@ function LauncherHome({
           <>
             <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">진행 중 세션</p>
             <h2 className="mt-2 text-3xl font-black tracking-[-0.04em]">{activeRoutine.name}</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-200">
-              {stepsByRoutineId[activeRoutine.id]?.length ?? 0} step이 열려 있습니다. 새로운 루틴보다 먼저 현재 흐름을 이어갑니다.
-            </p>
             <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-200">
+              <span className="rounded-full bg-white/12 px-3 py-1">{stepsByRoutineId[activeRoutine.id]?.length ?? 0} step</span>
               <span className="rounded-full bg-white/12 px-3 py-1">started {formatStartedAt(activeSession.startedAt)}</span>
               <span className="rounded-full bg-white/12 px-3 py-1">status {activeSession.status}</span>
             </div>
@@ -219,14 +332,48 @@ function LauncherHome({
             <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">지금 시작 가능한 루틴</p>
             <h2 className="mt-2 text-3xl font-black tracking-[-0.04em]">{heroRoutine.name}</h2>
             <p className="mt-3 text-sm leading-6 text-slate-200">
-              {heroReason ?? "지금 이 루틴이 가장 자연스럽게 열려 있습니다."}
+              {primaryRecommendation?.reasonCopy ?? "지금 이 루틴이 가장 자연스럽게 열려 있습니다."}
             </p>
+            {launcherAiSuggestion?.payload.kind === "routine_recommendation" ? (
+              <div className="mt-4 rounded-[24px] border border-white/12 bg-white/10 px-4 py-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.2em] text-sky-200">
+                      {launcherAiSuggestion.source === "ai" ? "AI Director Note" : "추천 근거"}
+                    </p>
+                    <p className="mt-2 text-base font-black tracking-[-0.03em] text-white">{launcherAiSuggestion.payload.directorNote}</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="rounded-full border border-white/16 px-3 py-1 text-[11px] font-black uppercase tracking-[0.18em] text-slate-200"
+                    onClick={() => dismissAiSuggestion(launcherAiSuggestion.id)}
+                  >
+                    hide
+                  </button>
+                </div>
+                {launcherAiSuggestion.source === "ai" ? (
+                  <div className="mt-3">
+                    <span className="rounded-full bg-white/12 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-sky-100">
+                      {getSuggestionConfidenceLabel(launcherAiSuggestion.confidence)}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="mt-4 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-200">
               <span className="rounded-2xl bg-white/10 px-3 py-2">steps {heroSteps.length}</span>
               <span className="rounded-2xl bg-white/10 px-3 py-2">duration {formatDuration(heroRoutine.estimatedDurationSec)}</span>
               <span className="rounded-2xl bg-white/10 px-3 py-2">{heroRoutine.category}</span>
             </div>
-            <Button className="mt-5 w-full border-0 bg-white text-slate-950" onClick={() => openRoutinePrelaunch(heroRoutine.id)}>
+            <Button
+              className="mt-5 w-full border-0 bg-white text-slate-950"
+              onClick={() =>
+                openRoutinePrelaunch(
+                  primaryRecommendation?.launchContext ?? buildManualLaunchContext(heroRoutine.id),
+                  launcherAiSuggestion?.payload.kind === "routine_recommendation" ? launcherAiSuggestion.id : undefined
+                )
+              }
+            >
               지금 시작
             </Button>
           </>
@@ -234,80 +381,160 @@ function LauncherHome({
           <>
             <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">지금 시작 가능한 루틴</p>
             <h2 className="mt-2 text-3xl font-black tracking-[-0.04em]">준비 중</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-200">활성 루틴이 아직 없습니다. seed routine을 불러오면 여기서 바로 시작할 수 있습니다.</p>
           </>
         )}
       </Card>
 
-      <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">다음 예정 루틴</p>
-        {nextScheduled ? (
-          <>
-            <h3 className="mt-2 text-xl font-black tracking-[-0.03em] text-slate-950">{nextScheduled.routine.name}</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-500">
-              {formatScheduledAt(nextScheduled.scheduledAt, now)}에 열립니다. 미리 step을 확인해 둘 수 있습니다.
-            </p>
-            <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-500">
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">{nextScheduled.routine.category}</span>
-              <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1">
-                {formatTriggerSummary(triggersByRoutineId[nextScheduled.routine.id] ?? [])}
-              </span>
-            </div>
-            <Button className="mt-4" onClick={() => openRoutinePrelaunch(nextScheduled.routine.id)}>
-              준비 보기
-            </Button>
-          </>
-        ) : (
-          <ZeroStateNote>다음 7일 안에 surfaced 되는 time-trigger 루틴이 아직 없습니다.</ZeroStateNote>
-        )}
-      </Card>
-
-      <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">오늘 building 진행</p>
-        {todayBuildingPreview.hasBuilding ? (
-          <>
-            <div className="mt-3 grid grid-cols-3 gap-2 text-sm font-semibold text-slate-700">
-              <span className="rounded-2xl bg-slate-50 px-3 py-3">floor {todayBuildingPreview.floorCount}</span>
-              <span className="rounded-2xl bg-slate-50 px-3 py-3">{getRoofLabel(todayBuildingPreview.roofType)}</span>
-              <span className="rounded-2xl bg-slate-50 px-3 py-3">score {todayBuildingPreview.totalScore}</span>
-            </div>
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <p className="text-xs font-semibold text-slate-500">
-                {currentBuilding?.finalizedAt ? "오늘 요약이 확정되어 있습니다." : "지금 상태로 하루 리뷰를 열 수 있습니다."}
+      <div className="grid grid-cols-1 gap-3">
+        <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Today</p>
+              <h3 className="mt-2 text-lg font-black tracking-[-0.03em] text-slate-950">오늘 building 진행</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                {todayBuildingPreview.hasBuilding ? `floor ${todayBuildingPreview.floorCount} · ${getRoofLabel(todayBuildingPreview.roofType)} · score ${todayBuildingPreview.totalScore}` : "아직 기록 없음"}
               </p>
-              <Button className="border-slate-200 bg-white" onClick={openTodayReview}>
-                오늘 리뷰
-              </Button>
             </div>
-          </>
-        ) : (
-          <ZeroStateNote>오늘 세션이 쌓이면 floor와 roof 요약이 이 카드에 표시됩니다.</ZeroStateNote>
-        )}
-      </Card>
-
-      <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">streak / combo</p>
-        {streakSummary.hasData ? (
-          <div className="mt-3 grid grid-cols-2 gap-2 text-sm font-semibold text-slate-700">
-            <span className="rounded-2xl bg-slate-50 px-3 py-3">{streakSummary.topRoutineName}</span>
-            <span className="rounded-2xl bg-slate-50 px-3 py-3">streak {streakSummary.topRoutineStreak}</span>
+            <Button className="border-slate-200 bg-white" onClick={openTodayReview} disabled={!todayBuildingPreview.hasBuilding}>
+              오늘 리뷰
+            </Button>
           </div>
-        ) : (
-          <ZeroStateNote>연속 클리어와 combo 집계는 세션이 누적되면 이 카드에서 바로 확인할 수 있습니다.</ZeroStateNote>
-        )}
-      </Card>
+        </Card>
 
-      <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
-        <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">surprise quest</p>
-        {surpriseQuest.hasQuest && surpriseQuest.quest ? (
-          <>
-            <h3 className="mt-2 text-lg font-black tracking-[-0.03em] text-slate-950">{surpriseQuest.quest.title}</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-500">오늘 surfaced 된 surprise quest입니다. 세션 흐름이 붙으면 여기서 요약됩니다.</p>
-          </>
-        ) : (
-          <ZeroStateNote>AI 또는 규칙 기반 이벤트가 열리면 surprise quest 슬롯이 여기에 나타납니다.</ZeroStateNote>
-        )}
-      </Card>
+        <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Town</p>
+              <h3 className="mt-2 text-lg font-black tracking-[-0.03em] text-slate-950">{currentTownMonthKey.replace("-", ".")} 월 타운</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                {townSeasonSummary[currentTownMonth.seasonTheme]} · 핵심 랜드마크 {currentTownProgress.coreUnlockedCount}/4 · floor {currentTownMonth.totalFloorCount}
+              </p>
+            </div>
+            <Button className="border-slate-200 bg-white" onClick={openTownView}>
+              이번 달 타운 보기
+            </Button>
+          </div>
+        </Card>
+
+        <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Manage</p>
+              <h3 className="mt-2 text-lg font-black tracking-[-0.03em] text-slate-950">migration · backup · analytics</h3>
+              <p className="mt-2 text-sm leading-6 text-slate-500">import {migrationCount} · storage {storageHealth.degraded ? "degraded" : "healthy"}</p>
+            </div>
+            <Button className="border-slate-200 bg-white" onClick={openManageView}>
+              관리 화면 열기
+            </Button>
+          </div>
+        </Card>
+      </div>
+
+      {hasSecondaryContent ? (
+        <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Secondary</p>
+              <h3 className="mt-2 text-lg font-black tracking-[-0.03em] text-slate-950">예정 큐 · 사이드</h3>
+            </div>
+            <Button className="border-slate-200 bg-white" onClick={() => setIsSecondaryOpen((value) => !value)}>
+              {isSecondaryOpen ? "접기" : "보조 정보 보기"}
+            </Button>
+          </div>
+
+          {isSecondaryOpen ? (
+            <div className="mt-4 flex flex-col gap-3">
+              <Card className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-4 py-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">예정 루틴 큐</p>
+                {upcomingRecommendations.length > 0 ? (
+                  <div className="mt-3 flex flex-col gap-3">
+                    {upcomingRecommendations.map((item) => (
+                      <div key={`${item.routine.id}-${item.scheduledAt}`} className="rounded-[20px] border border-slate-200 bg-white px-4 py-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="text-base font-black tracking-[-0.03em] text-slate-950">{item.routine.name}</h4>
+                            <p className="mt-2 text-sm leading-6 text-slate-500">{formatScheduledAt(item.scheduledAt ?? "", now)} · preview only</p>
+                          </div>
+                          <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-500">
+                            {item.routine.category}
+                          </span>
+                        </div>
+                        <Button className="mt-4 border-slate-200 bg-white" onClick={() => openRoutinePrelaunch(item.launchContext)}>
+                          준비 보기
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <ZeroStateNote>다음 7일 안에 surfaced 되는 time-trigger 루틴이 아직 없습니다.</ZeroStateNote>
+                )}
+              </Card>
+
+              {notificationPermission === "default" ? (
+                <Card className="rounded-[24px] border border-sky-100 bg-sky-50/90 px-4 py-4">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-sky-500">Open-App Notification</p>
+                  <Button className="mt-4 border-sky-200 bg-white" onClick={() => void requestNotificationPermission()}>
+                    시간대 알림 켜기
+                  </Button>
+                </Card>
+              ) : null}
+
+              {notificationPermission === "denied" ? (
+                <Card className="rounded-[24px] border border-slate-200 bg-slate-50/90 px-4 py-4">
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">Notification Status</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-500">차단됨</p>
+                </Card>
+              ) : null}
+
+              <Card className="rounded-[24px] border border-slate-200 bg-slate-50/80 px-4 py-4">
+                <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">surprise quest</p>
+                {surpriseQuest.hasQuest && surpriseQuest.quest ? (
+                  <>
+                    <h4 className="mt-2 text-base font-black tracking-[-0.03em] text-slate-950">{surpriseQuest.quest.title}</h4>
+                    <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{surpriseQuest.quest.contextType}</span>
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{surpriseQuest.quest.rewardType}</span>
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1">difficulty {surpriseQuest.quest.difficulty}</span>
+                    </div>
+                    {surpriseQuest.quest.status === "proposed" ? (
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <Button className="border-slate-200 bg-white" onClick={() => acceptSurpriseQuest(surpriseQuest.quest?.id ?? "")}>
+                          받기
+                        </Button>
+                        <Button className="bg-slate-100" onClick={() => skipSurpriseQuest(surpriseQuest.quest?.id ?? "")}>
+                          오늘은 넘기기
+                        </Button>
+                      </div>
+                    ) : null}
+                    {surpriseQuest.quest.status === "accepted" ? (
+                      <div className="mt-4 grid grid-cols-2 gap-3">
+                        <Button className="border-slate-200 bg-white" onClick={() => completeSurpriseQuest(surpriseQuest.quest?.id ?? "")}>
+                          완료 처리
+                        </Button>
+                        <Button className="bg-slate-100" onClick={() => skipSurpriseQuest(surpriseQuest.quest?.id ?? "")}>
+                          이번엔 스킵
+                        </Button>
+                      </div>
+                    ) : null}
+                    {surpriseQuest.quest.status === "completed" ? (
+                      <p className="mt-4 rounded-[18px] bg-emerald-50 px-3 py-3 text-sm font-semibold text-emerald-700">
+                        오늘 surprise quest를 완료했습니다.
+                      </p>
+                    ) : null}
+                    {surpriseQuest.quest.status === "skipped" ? (
+                      <p className="mt-4 rounded-[18px] bg-slate-100 px-3 py-3 text-sm font-semibold text-slate-600">
+                        이번 surprise quest는 오늘 흐름에서 제외했습니다.
+                      </p>
+                    ) : null}
+                  </>
+                ) : (
+                  <ZeroStateNote>없음</ZeroStateNote>
+                )}
+              </Card>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
     </div>
   );
 }
@@ -349,7 +576,7 @@ function ReviewGateView({
   remainingRoutines: Routine[];
   stepsByRoutineId: Record<string, RoutineStep[]>;
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
-  openRoutinePrelaunch: (routineId: string) => void;
+  openRoutinePrelaunch: (launchContext: RoutineLaunchContext, sourceSuggestionId?: string) => void;
   dismissRemainingRoutineForToday: (routineId: string) => void;
   closeDayReview: () => void;
   setActiveView: (view: GameActiveView) => void;
@@ -359,7 +586,6 @@ function ReviewGateView({
       <div>
         <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-300">Review Gate</p>
         <h1 className="mt-2 text-3xl font-black tracking-[-0.05em]">남은 세션을 수행하면 지붕을 더 높일 수 있습니다.</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-300">오늘 surfaced 된 추천 루틴 중 아직 성공하지 않은 세션만 보여 줍니다.</p>
       </div>
 
       <div className="flex flex-1 flex-col gap-3">
@@ -383,7 +609,7 @@ function ReviewGateView({
                 </button>
               </div>
               <div className="mt-4">
-                <Button className="border-0 bg-white text-slate-950" onClick={() => openRoutinePrelaunch(routine.id)}>
+                <Button className="border-0 bg-white text-slate-950" onClick={() => openRoutinePrelaunch(buildManualLaunchContext(routine.id))}>
                   세션 열기
                 </Button>
               </div>
@@ -417,8 +643,10 @@ function DayReviewView({
   stepsByRoutineId,
   stepResultsBySessionId,
   triggersByRoutineId,
+  aiSuggestionsById,
   reviewSummariesById,
   dismissedRoutineIds,
+  requestReviewSuggestion,
   confirmDayReview,
   closeDayReview,
   now
@@ -431,20 +659,26 @@ function DayReviewView({
   stepsByRoutineId: Record<string, RoutineStep[]>;
   stepResultsBySessionId: Record<string, SessionStepResult[]>;
   triggersByRoutineId: Record<string, RoutineTrigger[]>;
+  aiSuggestionsById: Record<string, AiSuggestion>;
   reviewSummariesById: Record<string, ReviewSummary>;
   dismissedRoutineIds: string[];
+  requestReviewSuggestion: (dateKey?: string) => Promise<void>;
   confirmDayReview: () => { ok: boolean; reason?: string };
   closeDayReview: () => void;
   now: Date;
 }) {
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
 
+  useEffect(() => {
+    if (!building || building.finalizedAt) return;
+    void requestReviewSuggestion(dateKey);
+  }, [building, dateKey, requestReviewSuggestion]);
+
   if (!building) {
     return (
       <div className="flex h-full flex-col justify-center gap-4">
         <Card className="rounded-[30px] border border-white/80 bg-white/92 px-5 py-5">
           <h2 className="text-xl font-black tracking-[-0.03em] text-slate-950">리뷰할 building이 아직 없습니다.</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-500">오늘 `Clear+` 세션이 쌓이면 여기서 지붕과 하루 요약을 확인할 수 있습니다.</p>
           <Button className="mt-4 bg-white" onClick={closeDayReview}>
             런처로 돌아가기
           </Button>
@@ -461,8 +695,13 @@ function DayReviewView({
     stepResultsBySessionId,
     stepsByRoutineId
   });
+  const reviewSuggestion = getReviewCommentarySuggestion({
+    aiSuggestionsById,
+    dateKey
+  });
   const summary =
     (building.reviewSummaryId ? reviewSummariesById[building.reviewSummaryId] : undefined) ??
+    (reviewSuggestion?.payload.kind === "review_commentary" ? reviewSuggestion.payload.summary : undefined) ??
     buildFallbackReviewSummary({
       dateKey,
       building,
@@ -489,9 +728,6 @@ function DayReviewView({
         <div>
           <p className="text-xs font-black uppercase tracking-[0.24em] text-amber-500">Day Review</p>
           <h1 className="mt-2 text-3xl font-black tracking-[-0.05em]">오늘 정산을 확인하고 지붕을 닫습니다.</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-600">
-            review를 확정해도 같은 게임 날짜에 새 성공 세션이 생기면 다시 정산이 필요합니다.
-          </p>
         </div>
         <span className={getRoofBadgeClassName(roofType)}>{getRoofLabel(roofType)}</span>
       </div>
@@ -538,6 +774,13 @@ function DayReviewView({
       <div className="grid gap-3 md:grid-cols-2">
         <Card className="rounded-[28px] border border-amber-100 bg-white px-4 py-4">
           <p className="text-xs font-black uppercase tracking-[0.18em] text-slate-400">오늘 요약</p>
+          {reviewSuggestion ? (
+            <div className="mt-3">
+              <span className="rounded-full bg-amber-50 px-3 py-1 text-[11px] font-black uppercase tracking-[0.16em] text-amber-700">
+                {reviewSuggestion.source === "ai" ? "AI commentary" : "fallback commentary"}
+              </span>
+            </div>
+          ) : null}
           <h3 className="mt-3 text-xl font-black tracking-[-0.03em] text-slate-950">{summary.headline}</h3>
           <p className="mt-3 text-sm leading-6 text-slate-600">{summary.body}</p>
           <div className="mt-4">
@@ -596,31 +839,42 @@ function DayReviewView({
 
 function PrelaunchView({
   selectedRoutine,
+  selectedLaunchContext,
   selectedSteps,
   selectedTriggers,
-  isTimeWindowActive,
   startRoutineSession,
-  returnToLauncher
+  returnToLauncher,
+  now = new Date()
 }: {
   selectedRoutine?: Routine;
+  selectedLaunchContext?: RoutineLaunchContext;
   selectedSteps: RoutineStep[];
   selectedTriggers: RoutineTrigger[];
-  isTimeWindowActive: boolean;
-  startRoutineSession: (routineId: string, triggerSource: "manual" | "time" | "location" | "ai_recommended") => {
+  startRoutineSession: (launchContext: RoutineLaunchContext) => {
     ok: boolean;
     reason?: string;
     sessionId?: string;
   };
   returnToLauncher: () => void;
+  now?: Date;
 }) {
   const [errorMessage, setErrorMessage] = useState<string | undefined>(undefined);
+  const launchAvailability = selectedLaunchContext
+    ? getRoutineLaunchAvailability({
+        launchContext: selectedLaunchContext,
+        triggers: selectedTriggers,
+        now
+      })
+    : {
+        canStartNow: true,
+        windowState: "manual" as const
+      };
 
   if (!selectedRoutine) {
     return (
       <div className="flex h-full flex-col justify-center gap-4">
         <Card className="rounded-[30px] border border-white/80 bg-white/88 px-5 py-5">
           <h2 className="text-xl font-black tracking-[-0.03em] text-slate-950">선택된 루틴이 없습니다.</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-500">런처로 돌아가 다시 시작할 루틴을 선택해 주세요.</p>
           <Button className="mt-4" onClick={returnToLauncher}>
             런처로 돌아가기
           </Button>
@@ -634,9 +888,6 @@ function PrelaunchView({
       <Card className="rounded-[30px] border border-slate-900/5 bg-white/92 px-5 py-5 shadow-[0_20px_48px_rgba(15,23,42,0.12)]">
         <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-400">Prelaunch</p>
         <h1 className="mt-2 text-3xl font-black tracking-[-0.04em] text-slate-950">{selectedRoutine.name}</h1>
-        <p className="mt-3 text-sm leading-6 text-slate-500">
-          루틴을 시작하기 전, step과 시간 감각을 짧게 확인하는 화면입니다.
-        </p>
         <div className="mt-4 grid grid-cols-3 gap-2 text-xs font-semibold text-slate-600">
           <span className="rounded-2xl bg-slate-50 px-3 py-3">{selectedRoutine.category}</span>
           <span className="rounded-2xl bg-slate-50 px-3 py-3">{selectedSteps.length} step</span>
@@ -645,6 +896,22 @@ function PrelaunchView({
         <p className="mt-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">
           {formatTriggerSummary(selectedTriggers)}
         </p>
+        {selectedLaunchContext ? (
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            {selectedLaunchContext.entrySource === "notification"
+              ? "알림에서 바로 진입한 세션입니다."
+              : selectedLaunchContext.reasonKey === "time_window_upcoming"
+                ? "곧 열릴 시간대 루틴을 미리 준비 중입니다."
+                : selectedLaunchContext.reasonKey === "time_window_active"
+                  ? "현재 열려 있는 시간 창으로 진입합니다."
+                  : "수동으로 바로 시작할 수 있습니다."}
+          </p>
+        ) : null}
+        {!launchAvailability.canStartNow && launchAvailability.blockedReason ? (
+          <p className="mt-3 rounded-[18px] bg-amber-50 px-3 py-3 text-sm font-semibold leading-6 text-amber-900">
+            {launchAvailability.blockedReason}
+          </p>
+        ) : null}
       </Card>
 
       <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
@@ -678,9 +945,9 @@ function PrelaunchView({
         </Button>
         <Button
           className="bg-slate-900 text-white hover:bg-slate-800"
+          disabled={!launchAvailability.canStartNow}
           onClick={() => {
-            const triggerSource = isTimeWindowActive ? "time" : "manual";
-            const result = startRoutineSession(selectedRoutine.id, triggerSource);
+            const result = startRoutineSession(selectedLaunchContext ?? buildManualLaunchContext(selectedRoutine.id));
             if (!result.ok) {
               setErrorMessage(result.reason);
               return;
@@ -688,7 +955,7 @@ function PrelaunchView({
             setErrorMessage(undefined);
           }}
         >
-          세션 열기
+          {launchAvailability.canStartNow ? "세션 열기" : "시간 창 대기 중"}
         </Button>
       </div>
     </div>
@@ -970,15 +1237,27 @@ function SessionCompletedView({
   routine,
   floor,
   stepResults,
+  aiSuggestionsById,
+  requestDurationSuggestion,
+  applyAiSuggestion,
+  dismissAiSuggestion,
   dismissCompletedSession
 }: {
   session?: RoutineSession;
   routine?: Routine;
   floor?: Floor;
   stepResults: SessionStepResult[];
+  aiSuggestionsById: Record<string, AiSuggestion>;
+  requestDurationSuggestion: (sessionId: string) => Promise<void>;
+  applyAiSuggestion: (suggestionId: string) => { ok: boolean; reason?: string };
+  dismissAiSuggestion: (suggestionId: string) => { ok: boolean; reason?: string };
   dismissCompletedSession: () => void;
 }) {
   const shouldRenderResultLoop = shouldShowResultLoop(session);
+  const durationSuggestion = getPendingDurationTuneSuggestion({
+    aiSuggestionsById,
+    sessionId: session?.id
+  });
 
   useEffect(() => {
     if (!session || !routine) return;
@@ -996,6 +1275,11 @@ function SessionCompletedView({
       window.clearTimeout(timeoutId);
     };
   }, [dismissCompletedSession, routine, session, shouldRenderResultLoop]);
+
+  useEffect(() => {
+    if (!session || !shouldRenderResultLoop) return;
+    void requestDurationSuggestion(session.id);
+  }, [requestDurationSuggestion, session, shouldRenderResultLoop]);
 
   if (!session || !routine) {
     return (
@@ -1078,6 +1362,28 @@ function SessionCompletedView({
         <p className="mt-2 text-xs font-semibold text-slate-400">recorded step score {stepResults.reduce((sum, result) => sum + result.scoreEarned, 0)}</p>
       </Card>
 
+      {durationSuggestion?.payload.kind === "duration_tune" ? (
+        <Card className="mt-4 rounded-[26px] border border-amber-200/70 bg-amber-50 px-4 py-4 text-slate-950">
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-700">Duration Tune</p>
+          <h3 className="mt-2 text-lg font-black tracking-[-0.03em]">{durationSuggestion.payload.stepTitle}</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-600">{durationSuggestion.reasoningSummary}</p>
+          <div className="mt-3 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+            <span className="rounded-full bg-white px-3 py-1">
+              {formatDuration(durationSuggestion.payload.currentDurationSec)} → {formatDuration(durationSuggestion.payload.proposedDurationSec)}
+            </span>
+            <span className="rounded-full bg-white px-3 py-1">{getSuggestionConfidenceLabel(durationSuggestion.confidence)}</span>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-3">
+            <Button className="border-amber-200 bg-white" onClick={() => applyAiSuggestion(durationSuggestion.id)}>
+              이번부터 반영
+            </Button>
+            <Button className="bg-amber-100" onClick={() => dismissAiSuggestion(durationSuggestion.id)}>
+              이번엔 유지
+            </Button>
+          </div>
+        </Card>
+      ) : null}
+
       <Button className="mt-6 rounded-[28px] border-0 bg-white py-4 text-base font-black text-slate-950" onClick={dismissCompletedSession}>
         즉시 닫기
       </Button>
@@ -1088,6 +1394,7 @@ function SessionCompletedView({
 export function RoutineLauncherContent({
   activeView,
   selectedRoutineId,
+  selectedLaunchContext,
   activeSessionId,
   routinesById,
   stepsByRoutineId,
@@ -1099,41 +1406,79 @@ export function RoutineLauncherContent({
   floorsById,
   dismissedRemainingRoutineIdsByDate,
   surpriseQuestsById,
+  townMonthsByKey,
+  aiSuggestionsById,
   reviewSummariesById,
+  migrationMetaBySourceFingerprint,
+  selectedTownMonthKey,
+  selectedTownDateKey,
+  notificationPermission,
+  storageHealth,
+  migrationNotice,
+  recoveryNotice,
   openRoutinePrelaunch,
   openTodayReview,
+  openTownView,
+  closeTownView,
+  openManageView,
+  closeManageView,
   returnToLauncher,
   openActiveSession,
+  selectTownMonth,
+  selectTownDate,
+  ensureTownMonthSnapshot,
   startRoutineSession,
+  requestNotificationPermission,
   pauseActiveSession,
   resumeActiveSession,
   completeCurrentStep,
   skipCurrentStep,
   dismissCompletedSession,
+  requestLauncherSuggestions,
+  requestDurationSuggestion,
+  requestReviewSuggestion,
+  applyAiSuggestion,
+  dismissAiSuggestion,
+  acceptSurpriseQuest,
+  completeSurpriseQuest,
+  skipSurpriseQuest,
   dismissRemainingRoutineForToday,
   confirmDayReview,
   closeDayReview,
+  exportBackup,
+  previewBackupImport,
+  applyBackupImport,
+  clearRecoveryNotice,
+  clearMigrationNotice,
   setActiveView,
   now = new Date()
 }: RoutineLauncherContentProps) {
   const visibleView = activeView === "debug" ? "launcher" : activeView;
-  const heroCandidate = getLauncherHeroRoutine(routinesById, triggersByRoutineId, now);
-  const nextScheduled = getNextScheduledRoutine(routinesById, triggersByRoutineId, heroCandidate?.routine.id, now);
-  const selectedRoutine = selectedRoutineId ? routinesById[selectedRoutineId] : undefined;
-  const selectedSteps = getStepsForRoutine(stepsByRoutineId, selectedRoutineId);
+  const evaluation = getTriggerEvaluatorResult({
+    routinesById,
+    triggersByRoutineId,
+    sessionsById,
+    activeSessionId,
+    now
+  });
+  const selectedRoutine = selectedLaunchContext
+    ? routinesById[selectedLaunchContext.routineId]
+    : selectedRoutineId
+      ? routinesById[selectedRoutineId]
+      : undefined;
+  const selectedSteps = getStepsForRoutine(stepsByRoutineId, selectedRoutine?.id);
   const selectedTriggers = selectedRoutine ? triggersByRoutineId[selectedRoutine.id] ?? [] : [];
-  const selectedStartable = selectedRoutine
-    ? getLauncherHeroRoutine(
-        selectedRoutine ? { [selectedRoutine.id]: selectedRoutine } : {},
-        selectedRoutine ? { [selectedRoutine.id]: selectedTriggers } : {},
-        now
-      )
-    : null;
   const activeSession = getActiveSession(sessionsById, activeSessionId);
   const activeRoutine = activeSession ? routinesById[activeSession.routineId] : undefined;
   const currentGameDateKey = toGameDateKey(now);
+  const currentTownMonthKey = currentGameDateKey.slice(0, 7);
   const currentBuilding = dailyBuildingsByDate[currentGameDateKey];
   const dismissedRoutineIds = dismissedRemainingRoutineIdsByDate[currentGameDateKey] ?? [];
+  const launcherAiSuggestion = getLauncherRoutineSuggestion({
+    aiSuggestionsById,
+    dateKey: currentGameDateKey,
+    routineId: evaluation.primaryRecommendation?.routine.id
+  });
   const remainingReviewRoutines = getRemainingReviewRoutines({
     routinesById,
     triggersByRoutineId,
@@ -1142,15 +1487,21 @@ export function RoutineLauncherContent({
     now
   });
 
+  useEffect(() => {
+    if (visibleView !== "town") return;
+    ensureTownMonthSnapshot(selectedTownMonthKey ?? currentTownMonthKey);
+  }, [currentTownMonthKey, ensureTownMonthSnapshot, selectedTownMonthKey, visibleView]);
+
   if (visibleView === "prelaunch") {
     return (
       <PrelaunchView
         selectedRoutine={selectedRoutine}
+        selectedLaunchContext={selectedLaunchContext}
         selectedSteps={selectedSteps}
         selectedTriggers={selectedTriggers}
-        isTimeWindowActive={selectedStartable?.isTimeWindowActive ?? false}
         startRoutineSession={startRoutineSession}
         returnToLauncher={returnToLauncher}
+        now={now}
       />
     );
   }
@@ -1180,11 +1531,75 @@ export function RoutineLauncherContent({
         stepsByRoutineId={stepsByRoutineId}
         stepResultsBySessionId={stepResultsBySessionId}
         triggersByRoutineId={triggersByRoutineId}
+        aiSuggestionsById={aiSuggestionsById}
         reviewSummariesById={reviewSummariesById}
         dismissedRoutineIds={dismissedRoutineIds}
+        requestReviewSuggestion={requestReviewSuggestion}
         confirmDayReview={confirmDayReview}
         closeDayReview={closeDayReview}
         now={now}
+      />
+    );
+  }
+
+  if (visibleView === "manage") {
+    return (
+      <RoutineManageView
+        currentGameDateKey={currentGameDateKey}
+        sessionsById={sessionsById}
+        dailyBuildingsByDate={dailyBuildingsByDate}
+        floorsById={floorsById}
+        surpriseQuestsById={surpriseQuestsById}
+        aiSuggestionsById={aiSuggestionsById}
+        migrationMetaBySourceFingerprint={migrationMetaBySourceFingerprint}
+        storageHealth={storageHealth}
+        migrationNotice={migrationNotice}
+        recoveryNotice={recoveryNotice}
+        exportBackup={exportBackup}
+        previewBackupImport={previewBackupImport}
+        applyBackupImport={applyBackupImport}
+        clearRecoveryNotice={clearRecoveryNotice}
+        clearMigrationNotice={clearMigrationNotice}
+        onClose={closeManageView}
+      />
+    );
+  }
+
+  if (visibleView === "town") {
+    const activeTownMonthKey = selectedTownMonthKey ?? currentTownMonthKey;
+    const activeTownMonth = townMonthsByKey[activeTownMonthKey];
+
+    if (!activeTownMonth) {
+      return (
+        <div className="flex h-full flex-col justify-center gap-3">
+          <Card className="rounded-[30px] border border-white/80 bg-white/92 px-5 py-5">
+            <h2 className="text-2xl font-black tracking-[-0.03em] text-slate-950">타운을 준비하는 중입니다.</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">이 달의 plot과 landmark를 스냅샷으로 다시 만들고 있습니다.</p>
+            <Button className="mt-4 bg-white" onClick={closeTownView}>
+              런처로 돌아가기
+            </Button>
+          </Card>
+        </div>
+      );
+    }
+
+    const layout = createTownLayout(activeTownMonthKey, getDaysInMonth(activeTownMonthKey));
+    const monthProgress = getTownMonthProgress(layout, activeTownMonth);
+
+    return (
+      <MonthlyTownView
+        townMonth={activeTownMonth}
+        layout={layout}
+        monthProgress={monthProgress}
+        currentGameDateKey={currentGameDateKey}
+        selectedDateKey={selectedTownDateKey ?? currentGameDateKey}
+        dailyBuildingsByDate={dailyBuildingsByDate}
+        reviewSummariesById={reviewSummariesById}
+        surpriseQuestsById={surpriseQuestsById}
+        canMoveToNextMonth={activeTownMonthKey < currentTownMonthKey}
+        onSelectDate={selectTownDate}
+        onChangeMonth={selectTownMonth}
+        onClose={closeTownView}
       />
     );
   }
@@ -1196,6 +1611,10 @@ export function RoutineLauncherContent({
         routine={activeRoutine}
         floor={activeSessionId ? floorsById[`floor-${activeSessionId}`] : undefined}
         stepResults={activeSessionId ? stepResultsBySessionId[activeSessionId] ?? [] : []}
+        aiSuggestionsById={aiSuggestionsById}
+        requestDurationSuggestion={requestDurationSuggestion}
+        applyAiSuggestion={applyAiSuggestion}
+        dismissAiSuggestion={dismissAiSuggestion}
         dismissCompletedSession={dismissCompletedSession}
       />
     ) : (
@@ -1218,25 +1637,32 @@ export function RoutineLauncherContent({
 
   return (
     <LauncherHome
-      heroRoutineId={heroCandidate?.routine.id}
-      heroReason={
-        heroCandidate?.isTimeWindowActive
-          ? "현재 시간 창이 열려 있어서 바로 시작하기 좋습니다."
-          : heroCandidate
-            ? "수동으로 언제든 시작할 수 있는 루틴입니다."
-            : undefined
-      }
-      nextScheduled={nextScheduled}
+      primaryRecommendation={evaluation.primaryRecommendation}
+      upcomingRecommendations={evaluation.upcomingRecommendations}
       routinesById={routinesById}
       stepsByRoutineId={stepsByRoutineId}
       dailyBuildingsByDate={dailyBuildingsByDate}
+      floorsById={floorsById}
       surpriseQuestsById={surpriseQuestsById}
+      townMonthsByKey={townMonthsByKey}
+      aiSuggestionsById={aiSuggestionsById}
+      migrationMetaBySourceFingerprint={migrationMetaBySourceFingerprint}
       sessionsById={sessionsById}
       activeSessionId={activeSessionId}
-      triggersByRoutineId={triggersByRoutineId}
+      notificationPermission={notificationPermission}
+      storageHealth={storageHealth}
       openTodayReview={openTodayReview}
+      openTownView={openTownView}
+      openManageView={openManageView}
       openRoutinePrelaunch={openRoutinePrelaunch}
       openActiveSession={openActiveSession}
+      requestNotificationPermission={requestNotificationPermission}
+      requestLauncherSuggestions={requestLauncherSuggestions}
+      dismissAiSuggestion={dismissAiSuggestion}
+      acceptSurpriseQuest={acceptSurpriseQuest}
+      completeSurpriseQuest={completeSurpriseQuest}
+      skipSurpriseQuest={skipSurpriseQuest}
+      launcherAiSuggestion={launcherAiSuggestion}
       now={now}
     />
   );
@@ -1245,6 +1671,7 @@ export function RoutineLauncherContent({
 export function RoutineLauncher() {
   const activeView = useRoutineGameStore((state) => state.activeView);
   const selectedRoutineId = useRoutineGameStore((state) => state.selectedRoutineId);
+  const selectedLaunchContext = useRoutineGameStore((state) => state.selectedLaunchContext);
   const activeSessionId = useRoutineGameStore((state) => state.activeSessionId);
   const routinesById = useRoutineGameStore((state) => state.routinesById);
   const stepsByRoutineId = useRoutineGameStore((state) => state.stepsByRoutineId);
@@ -1256,26 +1683,57 @@ export function RoutineLauncher() {
   const floorsById = useRoutineGameStore((state) => state.floorsById);
   const dismissedRemainingRoutineIdsByDate = useRoutineGameStore((state) => state.dismissedRemainingRoutineIdsByDate);
   const surpriseQuestsById = useRoutineGameStore((state) => state.surpriseQuestsById);
+  const townMonthsByKey = useRoutineGameStore((state) => state.townMonthsByKey);
+  const aiSuggestionsById = useRoutineGameStore((state) => state.aiSuggestionsById);
   const reviewSummariesById = useRoutineGameStore((state) => state.reviewSummariesById);
+  const migrationMetaBySourceFingerprint = useRoutineGameStore((state) => state.migrationMetaBySourceFingerprint);
+  const selectedTownMonthKey = useRoutineGameStore((state) => state.selectedTownMonthKey);
+  const selectedTownDateKey = useRoutineGameStore((state) => state.selectedTownDateKey);
+  const notificationPermission = useRoutineGameStore((state) => state.notificationPermission);
+  const storageHealth = useRoutineGameStore((state) => state.storageHealth);
+  const migrationNotice = useRoutineGameStore((state) => state.migrationNotice);
+  const recoveryNotice = useRoutineGameStore((state) => state.recoveryNotice);
   const openRoutinePrelaunch = useRoutineGameStore((state) => state.openRoutinePrelaunch);
   const openTodayReview = useRoutineGameStore((state) => state.openTodayReview);
+  const openTownView = useRoutineGameStore((state) => state.openTownView);
+  const closeTownView = useRoutineGameStore((state) => state.closeTownView);
+  const openManageView = useRoutineGameStore((state) => state.openManageView);
+  const closeManageView = useRoutineGameStore((state) => state.closeManageView);
   const returnToLauncher = useRoutineGameStore((state) => state.returnToLauncher);
   const openActiveSession = useRoutineGameStore((state) => state.openActiveSession);
+  const selectTownMonth = useRoutineGameStore((state) => state.selectTownMonth);
+  const selectTownDate = useRoutineGameStore((state) => state.selectTownDate);
+  const ensureTownMonthSnapshot = useRoutineGameStore((state) => state.ensureTownMonthSnapshot);
   const startRoutineSession = useRoutineGameStore((state) => state.startRoutineSession);
+  const requestNotificationPermission = useRoutineGameStore((state) => state.requestNotificationPermission);
   const pauseActiveSession = useRoutineGameStore((state) => state.pauseActiveSession);
   const resumeActiveSession = useRoutineGameStore((state) => state.resumeActiveSession);
   const completeCurrentStep = useRoutineGameStore((state) => state.completeCurrentStep);
   const skipCurrentStep = useRoutineGameStore((state) => state.skipCurrentStep);
   const dismissCompletedSession = useRoutineGameStore((state) => state.dismissCompletedSession);
+  const requestLauncherSuggestions = useRoutineGameStore((state) => state.requestLauncherSuggestions);
+  const requestDurationSuggestion = useRoutineGameStore((state) => state.requestDurationSuggestion);
+  const requestReviewSuggestion = useRoutineGameStore((state) => state.requestReviewSuggestion);
+  const applyAiSuggestion = useRoutineGameStore((state) => state.applyAiSuggestion);
+  const dismissAiSuggestion = useRoutineGameStore((state) => state.dismissAiSuggestion);
+  const acceptSurpriseQuest = useRoutineGameStore((state) => state.acceptSurpriseQuest);
+  const completeSurpriseQuest = useRoutineGameStore((state) => state.completeSurpriseQuest);
+  const skipSurpriseQuest = useRoutineGameStore((state) => state.skipSurpriseQuest);
   const dismissRemainingRoutineForToday = useRoutineGameStore((state) => state.dismissRemainingRoutineForToday);
   const confirmDayReview = useRoutineGameStore((state) => state.confirmDayReview);
   const closeDayReview = useRoutineGameStore((state) => state.closeDayReview);
+  const exportBackup = useRoutineGameStore((state) => state.exportBackup);
+  const previewBackupImport = useRoutineGameStore((state) => state.previewBackupImport);
+  const applyBackupImport = useRoutineGameStore((state) => state.applyBackupImport);
+  const clearRecoveryNotice = useRoutineGameStore((state) => state.clearRecoveryNotice);
+  const clearMigrationNotice = useRoutineGameStore((state) => state.clearMigrationNotice);
   const setActiveView = useRoutineGameStore((state) => state.setActiveView);
 
   return (
     <RoutineLauncherContent
       activeView={activeView}
       selectedRoutineId={selectedRoutineId}
+      selectedLaunchContext={selectedLaunchContext}
       activeSessionId={activeSessionId}
       routinesById={routinesById}
       stepsByRoutineId={stepsByRoutineId}
@@ -1287,20 +1745,50 @@ export function RoutineLauncher() {
       floorsById={floorsById}
       dismissedRemainingRoutineIdsByDate={dismissedRemainingRoutineIdsByDate}
       surpriseQuestsById={surpriseQuestsById}
+      townMonthsByKey={townMonthsByKey}
+      aiSuggestionsById={aiSuggestionsById}
       reviewSummariesById={reviewSummariesById}
+      migrationMetaBySourceFingerprint={migrationMetaBySourceFingerprint}
+      selectedTownMonthKey={selectedTownMonthKey}
+      selectedTownDateKey={selectedTownDateKey}
+      notificationPermission={notificationPermission}
+      storageHealth={storageHealth}
+      migrationNotice={migrationNotice}
+      recoveryNotice={recoveryNotice}
       openRoutinePrelaunch={openRoutinePrelaunch}
       openTodayReview={openTodayReview}
+      openTownView={openTownView}
+      closeTownView={closeTownView}
+      openManageView={openManageView}
+      closeManageView={closeManageView}
       returnToLauncher={returnToLauncher}
       openActiveSession={openActiveSession}
+      selectTownMonth={selectTownMonth}
+      selectTownDate={selectTownDate}
+      ensureTownMonthSnapshot={ensureTownMonthSnapshot}
       startRoutineSession={startRoutineSession}
+      requestNotificationPermission={requestNotificationPermission}
       pauseActiveSession={pauseActiveSession}
       resumeActiveSession={resumeActiveSession}
       completeCurrentStep={completeCurrentStep}
       skipCurrentStep={skipCurrentStep}
       dismissCompletedSession={dismissCompletedSession}
+      requestLauncherSuggestions={requestLauncherSuggestions}
+      requestDurationSuggestion={requestDurationSuggestion}
+      requestReviewSuggestion={requestReviewSuggestion}
+      applyAiSuggestion={applyAiSuggestion}
+      dismissAiSuggestion={dismissAiSuggestion}
+      acceptSurpriseQuest={acceptSurpriseQuest}
+      completeSurpriseQuest={completeSurpriseQuest}
+      skipSurpriseQuest={skipSurpriseQuest}
       dismissRemainingRoutineForToday={dismissRemainingRoutineForToday}
       confirmDayReview={confirmDayReview}
       closeDayReview={closeDayReview}
+      exportBackup={exportBackup}
+      previewBackupImport={previewBackupImport}
+      applyBackupImport={applyBackupImport}
+      clearRecoveryNotice={clearRecoveryNotice}
+      clearMigrationNotice={clearMigrationNotice}
       setActiveView={setActiveView}
     />
   );

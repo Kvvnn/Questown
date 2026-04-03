@@ -1,4 +1,4 @@
-const CACHE_VERSION = "questown-shell-v1";
+const CACHE_VERSION = "questown-shell-v2";
 const APP_SHELL_ASSETS = ["/", "/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
@@ -65,4 +65,23 @@ self.addEventListener("fetch", (event) => {
       })
     );
   }
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const targetUrl = typeof event.notification.data?.url === "string" ? event.notification.data.url : "/";
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (clients) => {
+      const existingClient = clients[0];
+
+      if (existingClient) {
+        await existingClient.navigate(targetUrl);
+        return existingClient.focus();
+      }
+
+      return self.clients.openWindow(targetUrl);
+    })
+  );
 });

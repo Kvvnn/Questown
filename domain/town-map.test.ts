@@ -1,36 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { ensureDailyRecord } from "./date";
-import {
-  createTownLayout,
-  getDistrictProgress,
-  getMonthlyMonumentTier,
-  getTownMonthProgress
-} from "./town-map";
-import { DailyRecord } from "./types";
+import { TownMonth } from "./game-types";
+import { createTownLayout, getDistrictProgress, getMonthlyMonumentTier, getTownMonthProgress } from "./town-map";
 
-const createRecord = (
-  date: string,
-  {
-    completedMain = 0,
-    totalMain = completedMain
-  }: {
-    completedMain?: number;
-    totalMain?: number;
-  } = {}
-): DailyRecord => ({
-  ...ensureDailyRecord(date),
-  completedCount: completedMain,
-  totalCount: totalMain,
-  completedByType: {
-    daily: 0,
-    main: completedMain,
-    sub: 0
-  },
-  totalByType: {
-    daily: 0,
-    main: totalMain,
-    sub: 0
-  }
+const createTownMonth = (
+  monthKey: string,
+  plotSnapshots: TownMonth["plotSnapshots"]
+): TownMonth => ({
+  monthKey,
+  seasonTheme: "spring",
+  plotSnapshots,
+  landmarkIds: [],
+  totalFloorCount: plotSnapshots.reduce((sum, snapshot) => sum + snapshot.floorCount, 0),
+  generatedAt: "2026-03-31T00:00:00.000Z"
 });
 
 describe("town map layout", () => {
@@ -43,7 +24,7 @@ describe("town map layout", () => {
   });
 
   it("follows calendar-like weekday placement", () => {
-    const layout = createTownLayout("2026-06", 30); // 2026-06-01 is Monday in Asia/Seoul
+    const layout = createTownLayout("2026-06", 30);
     const day1 = layout.plots.find((plot) => plot.day === 1);
     const day7 = layout.plots.find((plot) => plot.day === 7);
     const day8 = layout.plots.find((plot) => plot.day === 8);
@@ -90,15 +71,21 @@ describe("town map layout", () => {
 });
 
 describe("town month progression", () => {
-  it("scales district targetMain by active plot count for partial weeks", () => {
+  it("uses floor targets for partial extension districts", () => {
     const layout = createTownLayout("2026-06", 30);
-    const recordsByDate = Object.fromEntries(
+    const month = createTownMonth(
+      "2026-06",
       layout.plots
         .filter((plot) => plot.district === "축제 확장지")
-        .map((plot) => [plot.date, createRecord(plot.date, { completedMain: 1, totalMain: 1 })])
+        .map((plot) => ({
+          dateKey: plot.date,
+          floorCount: 1,
+          roofType: "none" as const,
+          ornamentIds: []
+        }))
     );
 
-    const progress = getDistrictProgress(layout, "축제 확장지", recordsByDate, 5);
+    const progress = getDistrictProgress(layout, "축제 확장지", month);
 
     expect(progress.activePlotCount).toBe(3);
     expect(progress.targetMain).toBe(3);
@@ -106,44 +93,52 @@ describe("town month progression", () => {
     expect(progress.unlocked).toBe(true);
   });
 
-  it("unlocks districts at the exact target threshold", () => {
+  it("unlocks core districts at the exact floor threshold", () => {
     const layout = createTownLayout("2026-06", 30);
     const residentialPlots = layout.plots.filter((plot) => plot.district === "주거지");
-    const recordsByDate = Object.fromEntries(
-      residentialPlots.map((plot, index) => [
-        plot.date,
-        createRecord(plot.date, { completedMain: index < 4 ? 1 : 0, totalMain: 1 })
-      ])
+    const month = createTownMonth(
+      "2026-06",
+      residentialPlots.map((plot, index) => ({
+        dateKey: plot.date,
+        floorCount: index < 3 ? 1 : index === 3 ? 5 : 0,
+        roofType: "none" as const,
+        ornamentIds: []
+      }))
     );
 
-    const progress = getDistrictProgress(layout, "주거지", recordsByDate, 4);
+    const progress = getDistrictProgress(layout, "주거지", month);
     expect(progress.activePlotCount).toBe(6);
-    expect(progress.targetMain).toBe(4);
-    expect(progress.completedMain).toBe(4);
-    expect(progress.unlocked).toBe(true);
+    expect(progress.targetMain).toBe(12);
+    expect(progress.completedMain).toBe(8);
+    expect(progress.unlocked).toBe(false);
+
+    const unlockedMonth = createTownMonth(
+      "2026-06",
+      residentialPlots.map((plot, index) => ({
+        dateKey: plot.date,
+        floorCount: index < 6 ? 2 : 0,
+        roofType: "none" as const,
+        ornamentIds: []
+      }))
+    );
+
+    expect(getDistrictProgress(layout, "주거지", unlockedMonth).unlocked).toBe(true);
   });
 
   it("counts only core districts toward the monthly monument tier", () => {
     const layout = createTownLayout("2026-06", 30);
-    const recordsByDate: Record<string, DailyRecord> = {};
+    const plotSnapshots = layout.plots.map((plot) => {
+      const unlockedCoreDistricts = new Set(["주거지", "상점가", "문화지구", "랜드마크 지구"]);
+      const floorCount = unlockedCoreDistricts.has(plot.district) ? 2 : plot.district === "축제 확장지" ? 1 : 0;
 
-    const unlockDistrict = (districtName: string, completedMain: number) => {
-      const plots = layout.plots.filter((plot) => plot.district === districtName);
-      plots.forEach((plot, index) => {
-        recordsByDate[plot.date] = createRecord(plot.date, {
-          completedMain: index < completedMain ? 1 : 0,
-          totalMain: 1
-        });
-      });
-    };
-
-    unlockDistrict("주거지", 4);
-    unlockDistrict("상점가", 4);
-    unlockDistrict("문화지구", 4);
-    unlockDistrict("랜드마크 지구", 4);
-    unlockDistrict("축제 확장지", 2);
-
-    const monthProgress = getTownMonthProgress(layout, recordsByDate, 4);
+      return {
+        dateKey: plot.date,
+        floorCount,
+        roofType: "none" as const,
+        ornamentIds: []
+      };
+    });
+    const monthProgress = getTownMonthProgress(layout, createTownMonth("2026-06", plotSnapshots));
 
     expect(monthProgress.coreUnlockedCount).toBe(4);
     expect(monthProgress.districtProgressByName["축제 확장지"].unlocked).toBe(true);

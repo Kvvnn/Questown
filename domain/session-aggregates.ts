@@ -1,6 +1,7 @@
 import { addDays } from "./date";
+import { buildBuildingOrnamentIds } from "./town-month";
 import { isClearOrBetterGrade } from "./session-scoring";
-import { DailyBuilding, Floor, QualityTier, Routine, RoutineSession } from "./game-types";
+import { DailyBuilding, Floor, QualityTier, Routine, RoutineSession, SurpriseQuest } from "./game-types";
 
 const getQualityTierFromGrade = (grade: RoutineSession["resultGrade"]): QualityTier | null => {
   if (grade === "Clear") return "standard";
@@ -77,12 +78,14 @@ export const buildDailyBuildingForDate = ({
   dateKey,
   sessions,
   floorsBySessionId,
-  streakLengthsBySessionId
+  streakLengthsBySessionId,
+  surpriseQuestsById = {}
 }: {
   dateKey: string;
   sessions: RoutineSession[];
   floorsBySessionId: Record<string, Floor>;
   streakLengthsBySessionId: Record<string, number>;
+  surpriseQuestsById?: Record<string, SurpriseQuest>;
 }): DailyBuilding | null => {
   const successfulSessions = sortSessionsChronologically(
     sessions.filter((session) => session.dateKey === dateKey && isClearOrBetterGrade(session.resultGrade))
@@ -107,7 +110,10 @@ export const buildDailyBuildingForDate = ({
     sessionIds: successfulSessions.map((session) => session.id),
     floorIds: successfulSessions.map((session) => floorsBySessionId[session.id].id),
     roofType: "none",
-    ornamentIds: [],
+    ornamentIds: buildBuildingOrnamentIds({
+      dateKey,
+      surpriseQuestsById
+    }),
     totalScore: successfulSessions.reduce((sum, session) => sum + session.totalScore, 0),
     successfulSessionCount: successfulSessions.length,
     averageNormalizedScore: normalizedScoreSum / successfulSessions.length,
@@ -117,10 +123,12 @@ export const buildDailyBuildingForDate = ({
 
 export const rebuildSessionAggregates = ({
   sessionsById,
-  routinesById
+  routinesById,
+  surpriseQuestsById = {}
 }: {
   sessionsById: Record<string, RoutineSession>;
   routinesById: Record<string, Routine>;
+  surpriseQuestsById?: Record<string, SurpriseQuest>;
 }) => {
   const candidateSessions = sortSessionsChronologically(
     Object.values(sessionsById).filter(
@@ -165,7 +173,8 @@ export const rebuildSessionAggregates = ({
       dateKey,
       sessions: candidateSessions,
       floorsBySessionId,
-      streakLengthsBySessionId
+      streakLengthsBySessionId,
+      surpriseQuestsById
     });
 
     if (!building) return acc;
