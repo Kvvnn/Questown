@@ -81,8 +81,7 @@ const DISTRICTS: DistrictZone[] = [
   { name: "상점가", rowStart: 1, rowEnd: 1, tintClass: "from-violet-200/45 to-indigo-200/20", isCore: true, rewardLabel: "마켓 랜드마크" },
   { name: "문화지구", rowStart: 2, rowEnd: 2, tintClass: "from-emerald-200/45 to-lime-200/20", isCore: true, rewardLabel: "문화 랜드마크" },
   { name: "랜드마크 지구", rowStart: 3, rowEnd: 3, tintClass: "from-amber-200/45 to-orange-200/20", isCore: true, rewardLabel: "메인 타워" },
-  { name: "축제 확장지", rowStart: 4, rowEnd: 4, tintClass: "from-pink-200/45 to-fuchsia-200/20", isCore: false, rewardLabel: "축제 장식" },
-  { name: "아카이브/오버플로우", rowStart: 5, rowEnd: 5, tintClass: "from-slate-200/45 to-slate-100/20", isCore: false, rewardLabel: "기록 보관소" }
+  { name: "축제 확장지", rowStart: 4, rowEnd: 5, tintClass: "from-pink-200/45 to-fuchsia-200/20", isCore: false, rewardLabel: "축제 장식" }
 ];
 
 const weekdayMap: Record<string, number> = {

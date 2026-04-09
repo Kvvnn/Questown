@@ -140,6 +140,32 @@ const ZeroStateNote = ({ children }: { children: React.ReactNode }) => (
   <p className="mt-2 text-sm leading-6 text-slate-500">{children}</p>
 );
 
+const ManageIconButton = ({
+  onClick,
+  inverted = false
+}: {
+  onClick: () => void;
+  inverted?: boolean;
+}) => (
+  <button
+    type="button"
+    aria-label="설정 열기"
+    onClick={onClick}
+    className={`inline-flex h-11 w-11 items-center justify-center rounded-full border transition ${
+      inverted ? "border-white/14 bg-white/10 text-white" : "border-slate-200 bg-white text-slate-700"
+    }`}
+  >
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.9" aria-hidden="true">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M10.325 4.317a1 1 0 0 1 1.35-.936l.388.154a1 1 0 0 0 .874 0l.388-.154a1 1 0 0 1 1.35.936l.03.416a1 1 0 0 0 .513.81l.36.2a1 1 0 0 1 .43 1.312l-.177.378a1 1 0 0 0 .078.957l.245.338a1 1 0 0 1-.132 1.374l-.318.27a1 1 0 0 0-.315.906l.072.412a1 1 0 0 1-.88 1.064l-.416.045a1 1 0 0 0-.764.58l-.17.38a1 1 0 0 1-1.284.505l-.393-.12a1 1 0 0 0-.928.12l-.344.235a1 1 0 0 1-1.374-.132l-.27-.318a1 1 0 0 0-.906-.315l-.412.072a1 1 0 0 1-1.064-.88l-.045-.416a1 1 0 0 0-.58-.764l-.38-.17a1 1 0 0 1-.505-1.284l.12-.393a1 1 0 0 0-.12-.928l-.235-.344a1 1 0 0 1 .132-1.374l.318-.27a1 1 0 0 0 .315-.906l-.072-.412a1 1 0 0 1 .88-1.064l.416-.045a1 1 0 0 0 .764-.58l.17-.38a1 1 0 0 1 1.284-.505l.393.12a1 1 0 0 0 .928-.12l.344-.235a1 1 0 0 1 1.374.132l.27.318a1 1 0 0 0 .906.315l.412-.072a1 1 0 0 1 1.064.88l.045.416z"
+      />
+      <circle cx="12" cy="12" r="2.8" />
+    </svg>
+  </button>
+);
+
 const townSeasonSummary: Record<TownMonth["seasonTheme"], string> = {
   spring: "봄 테마",
   summer: "여름 테마",
@@ -224,11 +250,9 @@ function LauncherHome({
   surpriseQuestsById,
   townMonthsByKey,
   aiSuggestionsById,
-  migrationMetaBySourceFingerprint,
   sessionsById,
   activeSessionId,
   notificationPermission,
-  storageHealth,
   openTodayReview,
   openTownView,
   openManageView,
@@ -252,11 +276,9 @@ function LauncherHome({
   surpriseQuestsById: Record<string, SurpriseQuest>;
   townMonthsByKey: Record<string, TownMonth>;
   aiSuggestionsById: Record<string, AiSuggestion>;
-  migrationMetaBySourceFingerprint: Record<string, RoutineMigrationMeta>;
   sessionsById: Record<string, RoutineSession>;
   activeSessionId?: string;
   notificationPermission: NotificationPermission | "unsupported";
-  storageHealth: StorageHealth;
   openTodayReview: () => void;
   openTownView: () => void;
   openManageView: () => void;
@@ -295,7 +317,6 @@ function LauncherHome({
     });
   const currentTownLayout = createTownLayout(currentTownMonthKey, getDaysInMonth(currentTownMonthKey));
   const currentTownProgress = getTownMonthProgress(currentTownLayout, currentTownMonth);
-  const migrationCount = Object.keys(migrationMetaBySourceFingerprint).length;
   const hasSecondaryContent =
     upcomingRecommendations.length > 0 ||
     surpriseQuest.hasQuest ||
@@ -308,12 +329,10 @@ function LauncherHome({
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-y-auto pb-2">
-      <Card className="rounded-[30px] border border-slate-200/70 bg-white/92 px-5 py-5 shadow-[0_20px_48px_rgba(15,23,42,0.12)]">
-        <p className="text-xs font-black uppercase tracking-[0.26em] text-sky-500">Questown Launcher</p>
-        <h1 className="mt-2 text-2xl font-black tracking-[-0.03em] text-slate-950">지금 시작 가능한 한 판만 보여줍니다.</h1>
-      </Card>
-
       <Card className="rounded-[32px] border border-slate-900/5 bg-slate-950 px-5 py-5 text-white shadow-[0_24px_56px_rgba(15,23,42,0.28)]">
+        <div className="flex justify-end">
+          <ManageIconButton onClick={openManageView} inverted />
+        </div>
         {activeSession && activeSession.status !== "completed" && activeRoutine ? (
           <>
             <p className="text-xs font-black uppercase tracking-[0.24em] text-emerald-300">진행 중 세션</p>
@@ -412,19 +431,6 @@ function LauncherHome({
             </div>
             <Button className="border-slate-200 bg-white" onClick={openTownView}>
               이번 달 타운 보기
-            </Button>
-          </div>
-        </Card>
-
-        <Card className="rounded-[28px] border border-white/80 bg-white/88 px-5 py-5">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-slate-400">Manage</p>
-              <h3 className="mt-2 text-lg font-black tracking-[-0.03em] text-slate-950">migration · backup · analytics</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-500">import {migrationCount} · storage {storageHealth.degraded ? "degraded" : "healthy"}</p>
-            </div>
-            <Button className="border-slate-200 bg-white" onClick={openManageView}>
-              관리 화면 열기
             </Button>
           </div>
         </Card>
@@ -1451,15 +1457,16 @@ export function RoutineLauncherContent({
   clearRecoveryNotice,
   clearMigrationNotice,
   setActiveView,
-  now = new Date()
+  now
 }: RoutineLauncherContentProps) {
+  const currentNow = now ?? new Date();
   const visibleView = activeView === "debug" ? "launcher" : activeView;
   const evaluation = getTriggerEvaluatorResult({
     routinesById,
     triggersByRoutineId,
     sessionsById,
     activeSessionId,
-    now
+    now: currentNow
   });
   const selectedRoutine = selectedLaunchContext
     ? routinesById[selectedLaunchContext.routineId]
@@ -1470,7 +1477,7 @@ export function RoutineLauncherContent({
   const selectedTriggers = selectedRoutine ? triggersByRoutineId[selectedRoutine.id] ?? [] : [];
   const activeSession = getActiveSession(sessionsById, activeSessionId);
   const activeRoutine = activeSession ? routinesById[activeSession.routineId] : undefined;
-  const currentGameDateKey = toGameDateKey(now);
+  const currentGameDateKey = toGameDateKey(currentNow);
   const currentTownMonthKey = currentGameDateKey.slice(0, 7);
   const currentBuilding = dailyBuildingsByDate[currentGameDateKey];
   const dismissedRoutineIds = dismissedRemainingRoutineIdsByDate[currentGameDateKey] ?? [];
@@ -1484,7 +1491,7 @@ export function RoutineLauncherContent({
     triggersByRoutineId,
     sessionsById,
     dismissedRoutineIds,
-    now
+    now: currentNow
   });
 
   useEffect(() => {
@@ -1537,7 +1544,7 @@ export function RoutineLauncherContent({
         requestReviewSuggestion={requestReviewSuggestion}
         confirmDayReview={confirmDayReview}
         closeDayReview={closeDayReview}
-        now={now}
+        now={currentNow}
       />
     );
   }
@@ -1646,11 +1653,9 @@ export function RoutineLauncherContent({
       surpriseQuestsById={surpriseQuestsById}
       townMonthsByKey={townMonthsByKey}
       aiSuggestionsById={aiSuggestionsById}
-      migrationMetaBySourceFingerprint={migrationMetaBySourceFingerprint}
       sessionsById={sessionsById}
       activeSessionId={activeSessionId}
       notificationPermission={notificationPermission}
-      storageHealth={storageHealth}
       openTodayReview={openTodayReview}
       openTownView={openTownView}
       openManageView={openManageView}
@@ -1663,7 +1668,7 @@ export function RoutineLauncherContent({
       completeSurpriseQuest={completeSurpriseQuest}
       skipSurpriseQuest={skipSurpriseQuest}
       launcherAiSuggestion={launcherAiSuggestion}
-      now={now}
+      now={currentNow}
     />
   );
 }

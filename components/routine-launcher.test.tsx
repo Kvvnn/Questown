@@ -153,8 +153,9 @@ describe("routine launcher", () => {
     expect(markup).toContain("Morning Reset");
     expect(markup).toContain("오늘 building 진행");
     expect(markup).toContain("이번 달 타운 보기");
-    expect(markup).toContain("관리 화면 열기");
+    expect(markup).toContain("aria-label=\"설정 열기\"");
     expect(markup).toContain("보조 정보 보기");
+    expect(markup).not.toContain("지금 시작 가능한 한 판만 보여줍니다.");
     expect(markup).not.toContain("시간대 알림 켜기");
     expect(markup).not.toContain("surprise quest");
     expect(markup).not.toContain("Routine Registry");
@@ -169,17 +170,16 @@ describe("routine launcher", () => {
     expect(markup).not.toContain("시간대 알림 켜기");
   });
 
-  it("renders the town and manage CTAs between today building and surprise quest", () => {
+  it("keeps the town CTA below today and moves manage entry to the top icon", () => {
     const props = buildProps();
     addTownFixture(props);
 
     const markup = renderToStaticMarkup(<RoutineLauncherContent {...props} />);
 
     expect(markup).toContain("이번 달 타운 보기");
-    expect(markup).toContain("관리 화면 열기");
+    expect(markup).toContain("aria-label=\"설정 열기\"");
     expect(markup.indexOf("오늘 building 진행")).toBeLessThan(markup.indexOf("이번 달 타운 보기"));
-    expect(markup.indexOf("이번 달 타운 보기")).toBeLessThan(markup.indexOf("관리 화면 열기"));
-    expect(markup.indexOf("관리 화면 열기")).toBeLessThan(markup.indexOf("보조 정보 보기"));
+    expect(markup.indexOf("이번 달 타운 보기")).toBeLessThan(markup.indexOf("보조 정보 보기"));
   });
 
   it("renders the launcher AI note and confidence chip when a suggestion exists", () => {

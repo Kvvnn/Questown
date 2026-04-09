@@ -68,8 +68,7 @@ const districtRewardPalette: Record<string, { primary: string; secondary: string
   상점가: { primary: "#60a5fa", secondary: "#3b82f6", accent: "#1d4ed8", soft: "#deefff" },
   문화지구: { primary: "#a78bfa", secondary: "#8b5cf6", accent: "#6d28d9", soft: "#efe5ff" },
   "랜드마크 지구": { primary: "#f59e0b", secondary: "#ea580c", accent: "#9a3412", soft: "#fff1d8" },
-  "축제 확장지": { primary: "#f472b6", secondary: "#ec4899", accent: "#be185d", soft: "#ffe0f0" },
-  "아카이브/오버플로우": { primary: "#94a3b8", secondary: "#64748b", accent: "#334155", soft: "#ecf3fb" }
+  "축제 확장지": { primary: "#f472b6", secondary: "#ec4899", accent: "#be185d", soft: "#ffe0f0" }
 };
 
 const toIso = (col: number, row: number, tileWidth: number, tileHeight: number) => ({

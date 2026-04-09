@@ -24,8 +24,7 @@ const districtAccent: Record<string, string> = {
   상점가: "bg-sky-100 text-sky-700",
   문화지구: "bg-violet-100 text-violet-700",
   "랜드마크 지구": "bg-amber-100 text-amber-700",
-  "축제 확장지": "bg-pink-100 text-pink-700",
-  "아카이브/오버플로우": "bg-slate-100 text-slate-700"
+  "축제 확장지": "bg-pink-100 text-pink-700"
 };
 
 const seasonThemeLabel: Record<TownMonth["seasonTheme"], string> = {
